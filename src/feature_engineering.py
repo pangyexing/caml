@@ -14,6 +14,7 @@ from typing import Dict, List, Tuple, Optional, Union, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 import time
+from config import MODEL_DIR
 
 def analyze_feature_stability(df: pd.DataFrame, 
                               time_column: str = 'recall_date', 
@@ -201,9 +202,8 @@ def analyze_features_for_selection_parallel(train_df: pd.DataFrame,
                     print(f"  最大值: {valid_values.max():.4f}")
     
     # Save feature statistics
-    model_dir = "funnel_models"
-    os.makedirs(model_dir, exist_ok=True)
-    feature_stats.to_csv(os.path.join(model_dir, "feature_selection_stats.csv"), index=False)
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    feature_stats.to_csv(os.path.join(MODEL_DIR, "feature_selection_stats.csv"), index=False)
     
     # Provide feature selection suggestions
     print(f"\n特征分析完成，耗时 {time.time() - start_time:.2f} 秒")
@@ -769,8 +769,7 @@ def trim_features_by_importance(feature_cols: List[str],
     )
     
     # Save feature scores and selection results
-    model_dir = "funnel_models"
-    os.makedirs(model_dir, exist_ok=True)
+    os.makedirs(MODEL_DIR, exist_ok=True)
     
     # Save feature selection results to CSV
     if feature_scores:
@@ -783,7 +782,7 @@ def trim_features_by_importance(feature_cols: List[str],
             scores_df.append(row)
         
         scores_df = pd.DataFrame(scores_df)
-        scores_file = os.path.join(model_dir, "feature_selection_scores.csv")
+        scores_file = os.path.join(MODEL_DIR, "feature_selection_scores.csv")
         scores_df.to_csv(scores_file, index=False)
         print(f"特征选择详细评分已保存至 {scores_file}")
     

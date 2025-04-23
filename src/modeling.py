@@ -49,7 +49,7 @@ from src.model_utils import (
     save_feature_list
 )
 # Import configuration module
-from src.config import FEATURE_SELECTION_PARAMS, FEATURE_SELECTION_WEIGHTS
+from src.config import FEATURE_SELECTION_PARAMS, FEATURE_SELECTION_WEIGHTS, MODEL_DIR
 
 def train_funnel_model(train_df: pd.DataFrame,
                       test_df: pd.DataFrame,
@@ -196,9 +196,8 @@ def train_funnel_model(train_df: pd.DataFrame,
     plt.close()
     
     # Export feature importance
-    model_dir = "funnel_models"
-    os.makedirs(model_dir, exist_ok=True)
-    importance_file = os.path.join(model_dir, f"{target}_feature_importance.csv")
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    importance_file = os.path.join(MODEL_DIR, f"{target}_feature_importance.csv")
     
     importance_df = pd.DataFrame(sorted_importance, columns=['feature', 'importance'])
     importance_df.to_csv(importance_file, index=False)
@@ -230,15 +229,14 @@ def train_funnel_model(train_df: pd.DataFrame,
     shap_importance_dict = dict(zip(X_sample.columns, shap_importance))
     
     # Sort and export
-    model_dir = "funnel_models"
-    shap_importance_file = os.path.join(model_dir, f"{target}_shap_importance.csv")
+    shap_importance_file = os.path.join(MODEL_DIR, f"{target}_shap_importance.csv")
     
     shap_items = sorted(shap_importance_dict.items(), key=lambda item: item[1], reverse=True)
     shap_df = pd.DataFrame(shap_items, columns=['feature', 'importance'])
     shap_df.to_csv(shap_importance_file, index=False)
 
     # Save model as PMML file
-    model_path = os.path.join(model_dir, f"{target}_model.pmml")
+    model_path = os.path.join(MODEL_DIR, f"{target}_model.pmml")
     sklearn2pmml(pipeline, model_path, with_repr=True)
     
     return model, metrics, feature_importance
@@ -308,7 +306,7 @@ def two_stage_modeling_pipeline(train_df: pd.DataFrame,
         sampled_indices = np.random.choice(len(test_df_processed), sample_size, replace=False)
         X_sample = test_df_processed.iloc[sampled_indices][initial_features]
         
-        shap_file = os.path.join("funnel_models", f"{target}_initial_shap.joblib")
+        shap_file = os.path.join(MODEL_DIR, f"{target}_initial_shap.joblib")
         
         # Load cached SHAP values if available
         if os.path.exists(shap_file):
@@ -320,7 +318,7 @@ def two_stage_modeling_pipeline(train_df: pd.DataFrame,
             shap_values = explainer.shap_values(X_sample)
             
             # Cache SHAP values
-            os.makedirs("funnel_models", exist_ok=True)
+            os.makedirs(MODEL_DIR, exist_ok=True)
             dump(shap_values, shap_file)
             print(f"SHAP值已缓存至: {shap_file}")
         
@@ -373,9 +371,8 @@ def two_stage_modeling_pipeline(train_df: pd.DataFrame,
     print(f"筛选后特征数量: {len(selected_features)}")
     
     # Save selected feature list
-    model_dir = "funnel_models"
-    os.makedirs(model_dir, exist_ok=True)
-    feature_file_path = os.path.join(model_dir, f"{target}_selected_features.txt")
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    feature_file_path = os.path.join(MODEL_DIR, f"{target}_selected_features.txt")
     
     # Use shared function to save feature list
     save_feature_list(selected_features, feature_file_path)
@@ -390,7 +387,7 @@ def two_stage_modeling_pipeline(train_df: pd.DataFrame,
     )
     
     # Save final model
-    final_model_path = os.path.join(model_dir, f"{target}_final_model.pmml")
+    final_model_path = os.path.join(MODEL_DIR, f"{target}_final_model.pmml")
     pipeline = PMMLPipeline([("classifier", final_model)])
     sklearn2pmml(pipeline, final_model_path, with_repr=True)
     

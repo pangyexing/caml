@@ -9,6 +9,7 @@ Handles data cleaning, feature preparation, and dataset splitting.
 import pandas as pd
 import numpy as np
 from typing import List, Tuple, Dict, Optional, Union
+from config import LABEL_COLS, ID_COLS
 
 def preprocess_data(df: pd.DataFrame, 
                     feature_cols: List[str], 
@@ -43,8 +44,9 @@ def preprocess_data(df: pd.DataFrame,
     # Keep only necessary columns if specified
     if keep_only_features:
         # Keep essential columns: ID, date, labels
-        necessary_cols = ['input_key', 'recall_date']
-        label_cols = [col for col in df.columns if col.startswith('label_')]
+        necessary_cols = ID_COLS
+        # Instead of redefining label columns, use the imported LABEL_COLS
+        label_cols = [col for col in LABEL_COLS if col in df.columns]
         
         # Time bins and score columns
         additional_cols = []

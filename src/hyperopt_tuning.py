@@ -26,6 +26,7 @@ from sklearn2pmml import sklearn2pmml
 
 # Import local modules
 from src.preprocessing import preprocess_data
+from src.config import TUNING_DIR
 
 # Ignore warnings
 warnings.filterwarnings('ignore')
@@ -38,7 +39,7 @@ class HyperparameterOptimizer:
                  test_df: pd.DataFrame, 
                  target: str = 'label_apply', 
                  max_evals: int = 50,
-                 output_dir: str = "tuned_models"):
+                 output_dir: str = TUNING_DIR):
         """
         Initialize hyperparameter optimizer.
         
@@ -434,7 +435,7 @@ def main():
     
     try:
         # Set output directory
-        output_dir = "tuned_models"
+        output_dir = TUNING_DIR
         os.makedirs(output_dir, exist_ok=True)
         
         # Load training and test data
