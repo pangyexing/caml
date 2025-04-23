@@ -13,22 +13,15 @@ import time
 import json
 import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Optional, Union, Any
+from config import ensure_dirs, MODEL_DIR, TUNING_DIR, RESULTS_DIR, ID_COLS, LABEL_COLS, EXCLUDE_COLS as CONFIG_EXCLUDE_COLS
 
-# Common column constants
-ESSENTIAL_COLS = ['input_key', 'recall_date']
-LABEL_COLS = ['label_register', 'label_apply', 'label_approve']
-EXCLUDE_COLS = ESSENTIAL_COLS + LABEL_COLS + ['time_bin', 'score', 'customer_name', 'speaking_duration', 'label_intention']
+# Use ID_COLS from config instead of redefining ESSENTIAL_COLS
+# LABEL_COLS is now imported from config
 
-# Directory constants
-MODEL_DIR = "funnel_models"
-TUNING_DIR = "tuned_models"
-RESULTS_DIR = "optimization_results"
+# Extend the EXCLUDE_COLS from config to include 'score' which is only needed in utils
+EXCLUDE_COLS = CONFIG_EXCLUDE_COLS + ['score']
 
-def ensure_dirs():
-    """Ensure all required directories exist."""
-    for directory in [MODEL_DIR, TUNING_DIR, RESULTS_DIR]:
-        os.makedirs(directory, exist_ok=True)
-    print(f"Created necessary directories: {', '.join([MODEL_DIR, TUNING_DIR, RESULTS_DIR])}")
+# Directory constants are now imported from config
 
 def get_feature_cols(df: pd.DataFrame) -> List[str]:
     """
