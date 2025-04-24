@@ -80,6 +80,10 @@ def prepare_prediction_data(df: pd.DataFrame,
     
     # Extract features and IDs
     X = df[feature_cols]
+    
+    # Create a mapping from original feature names to x1, x2, ... format
+    # feature_mapping = {original: f'x{i+1}' for i, original in enumerate(feature_cols)}
+    # X_test_renamed = X.rename(columns=feature_mapping)
     ids_df = df[id_cols] if all(col in df.columns for col in id_cols) else None
     
     return X, ids_df

@@ -46,14 +46,17 @@ from src.model_utils import (
     get_model_features,
     prepare_prediction_data,
     predict_with_model,
-    save_feature_list
+    save_feature_list,
+    load_feature_list
 )
 # Import configuration module
 from src.config import FEATURE_SELECTION_PARAMS, FEATURE_SELECTION_WEIGHTS, MODEL_DIR
+# Import deployment functions
+from src.deployment import deploy_model
 
 def train_funnel_model(train_df: pd.DataFrame,
                       test_df: pd.DataFrame,
-                      target: str = 'label_apply') -> Tuple[XGBClassifier, Dict[str, Any], Dict[str, float]]:
+                      target: str = 'label_apply') -> Tuple[PMMLPipeline, XGBClassifier, Dict[str, Any], Dict[str, float]]:
     """
     Train a funnel conversion model optimized for positive sample prediction.
     
@@ -238,8 +241,8 @@ def train_funnel_model(train_df: pd.DataFrame,
     # Save model as PMML file
     model_path = os.path.join(MODEL_DIR, f"{target}_model.pmml")
     sklearn2pmml(pipeline, model_path, with_repr=True)
-    
-    return model, metrics, feature_importance
+    # Return the fitted pipeline so downstream exports preserve column names
+    return pipeline, model, metrics, feature_importance
 
 def two_stage_modeling_pipeline(train_df: pd.DataFrame, 
                                test_df: pd.DataFrame, 
@@ -275,7 +278,7 @@ def two_stage_modeling_pipeline(train_df: pd.DataFrame,
     
     # Train initial model
     print("\n训练初始模型...")
-    initial_model, initial_metrics, feature_importance = train_funnel_model(
+    initial_pipeline, initial_model, initial_metrics, feature_importance = train_funnel_model(
         train_df_processed, test_df_processed, target=target
     )
     
@@ -382,22 +385,22 @@ def two_stage_modeling_pipeline(train_df: pd.DataFrame,
     test_df_final = preprocess_data(test_df.copy(), selected_features, is_training=False, keep_only_features=True)
     
     # Second training with focus on positive sample prediction
-    final_model, final_metrics, _ = train_funnel_model(
+    final_pipeline, final_model, final_metrics, _ = train_funnel_model(
         train_df_final, test_df_final, target=target
     )
     
-    # Save final model
+    # Save final model using returned pipeline to preserve column names
     final_model_path = os.path.join(MODEL_DIR, f"{target}_final_model.pmml")
-    pipeline = PMMLPipeline([("classifier", final_model)])
-    sklearn2pmml(pipeline, final_model_path, with_repr=True)
+    sklearn2pmml(final_pipeline, final_model_path, with_repr=True)
     
     print("\n=== 模型部署验证 ===")
     # Deployment validation - using exactly the same feature set as training
-    deploy_results = deploy_model_with_selected_features(
+    deploy_results = deploy_model(
+        final_model_path,
         test_df.copy(), 
         target, 
-        final_model_path,
-        feature_list_file=feature_file_path
+        feature_list_file=feature_file_path,
+        output_dir=MODEL_DIR
     )
     
     # Compare initial and final model metrics
@@ -429,79 +432,5 @@ def two_stage_modeling_pipeline(train_df: pd.DataFrame,
         'model_file': final_model_path
     }
 
-def deploy_model_with_selected_features(test_df: pd.DataFrame, 
-                                       target: str, 
-                                       model_path: str, 
-                                       feature_list_file: str, 
-                                       bins: int = 10) -> Dict[str, Any]:
-    """
-    Simplified model deployment function using the same feature set as training.
-    
-    Args:
-        test_df: Test dataset
-        target: Target variable
-        model_path: PMML model path
-        feature_list_file: Feature list file path
-        bins: Score bin count
-    
-    Returns:
-        Dictionary with deployment metrics and results
-    """
-    # Load model and feature list
-    model = load_pmml_model(model_path)
-    feature_cols = load_feature_list(feature_list_file)
-    
-    print(f"部署使用 {len(feature_cols)} 个特征 (与第二次训练完全一致)")
-    
-    # Filter out non-feature columns
-    exclude_cols = ['input_key', 'recall_date', 'label_register', 'label_apply', 'label_approve', 'time_bin', 'score']
-    feature_cols = [col for col in feature_cols if col not in exclude_cols]
-    
-    print(f"过滤后实际用于预测的特征数量: {len(feature_cols)}")
-    
-    # Preprocess test data
-    test_df = preprocess_data(test_df, feature_cols, is_training=False, keep_only_features=True)
-    
-    # Prepare data for prediction
-    X_test, _ = prepare_prediction_data(test_df, feature_cols)
-    
-    # Make predictions
-    predictions = predict_with_model(model, X_test)
-    
-    # Add predictions to test data
-    test_df['score'] = predictions['score']
-    test_df['prediction'] = predictions['prediction']
-    test_df['probability'] = predictions['probability']
-    
-    # Create score bins
-    bin_stats = create_score_bins(
-        test_df, 
-        target_col=target, 
-        output_file=f"{target}_score_bins.csv"
-    )
-    
-    # Plot score distribution
-    plot_score_distribution(bin_stats, target)
-    
-    # Calculate metrics
-    metrics = evaluate_predictions(test_df[target], test_df['probability'])
-    
-    # Export results
-    export_cols = ['input_key', 'recall_date', target, 'score']
-    if all(col in test_df.columns for col in export_cols):
-        test_df[export_cols].to_csv(f"{target}_deployment_results.csv", index=False)
-    
-    # Print metrics
-    print("\n模型部署验证指标:")
-    print(f"AUC: {metrics['auc']:.4f}, PR-AUC: {metrics['pr_auc']:.4f}")
-    print(f"KS: {metrics['ks']:.4f}")
-    print(f"最佳阈值: {metrics['threshold']:.4f}, F1: {metrics['f1']:.4f}")
-    print(f"召回率: {metrics['recall']:.4f}, 精确率: {metrics['precision']:.4f}")
-    
-    return {
-        'model_path': model_path,
-        'metrics': metrics,
-        'feature_cols': feature_cols,
-        'bin_stats': bin_stats,
-        'results_file': f"{target}_deployment_results.csv"
-    } 
+# The deploy_model_with_selected_features function has been removed and replaced by the
+# unified deploy_model function in src/deployment.py 

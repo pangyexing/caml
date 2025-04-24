@@ -23,7 +23,7 @@ ID_COLS = ['input_key', 'recall_date']
 LABEL_COLS = ['label_register', 'label_apply', 'label_approve']
 
 # Non-feature columns to exclude
-EXCLUDE_COLS = ID_COLS + LABEL_COLS + ['time_bin', 'customer_name', 'speaking_duration', 'label_intention']
+EXCLUDE_COLS = ID_COLS + LABEL_COLS + ['time_bin', 'customer_name', 'speaking_duration', 'label_intention', 'score']
 
 # Default model parameters
 DEFAULT_XGB_PARAMS = {
