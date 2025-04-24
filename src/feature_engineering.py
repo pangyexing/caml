@@ -18,7 +18,8 @@ from config import MODEL_DIR
 
 def analyze_feature_stability(df: pd.DataFrame, 
                               time_column: str = 'recall_date', 
-                              n_bins: int = 5) -> Dict[str, Dict[str, Any]]:
+                              n_bins: int = 5,
+                              n_jobs: int = 4) -> Dict[str, Dict[str, Any]]:
     """
     Analyze feature stability using Population Stability Index (PSI).
     
@@ -26,10 +27,12 @@ def analyze_feature_stability(df: pd.DataFrame,
         df: DataFrame with features and time column
         time_column: Time column name
         n_bins: Number of time bins
+        n_jobs: Number of parallel jobs
     
     Returns:
         Dictionary with PSI values for each feature
     """
+    start_time = time.time()
     df[time_column] = pd.to_datetime(df[time_column], format='%Y%m%d')
     df = df.sort_values(by=time_column)
     
@@ -39,36 +42,71 @@ def analyze_feature_stability(df: pd.DataFrame,
     exclude_cols = ['input_key', time_column, 'time_bin', 'label_register', 'label_apply', 'label_approve']
     feature_cols = [col for col in df.columns if col not in exclude_cols]
     
-    # Calculate PSI
+    # Calculate PSI in parallel
     psi_results = {}
     n_features = len(feature_cols)
     
-    for i, feature in enumerate(feature_cols):
-        print(f"\rProcessing feature {i+1}/{n_features}: {feature}{' '*20}", end='')
-        psi_values = []
-        base_data = df[df['time_bin'] == 0][feature]
-        
-        base_hist, base_edges = np.histogram(base_data, bins=10, range=(df[feature].min(), df[feature].max()))
-        base_hist = base_hist / len(base_data)
-        base_hist = np.where(base_hist == 0, 0.0001, base_hist)
-        
-        for bin_idx in range(1, n_bins):
-            curr_data = df[df['time_bin'] == bin_idx][feature]
+    print(f"开始并行计算特征稳定性 (PSI)，共 {n_features} 个特征...")
+    
+    # Worker function to calculate PSI for a single feature
+    def calculate_feature_psi(feature):
+        try:
+            psi_values = []
+            base_data = df[df['time_bin'] == 0][feature]
             
-            # Use same bin edges for the current distribution
-            curr_hist, _ = np.histogram(curr_data, bins=base_edges)
-            curr_hist = curr_hist / len(curr_data)
-            curr_hist = np.where(curr_hist == 0, 0.0001, curr_hist)
+            base_hist, base_edges = np.histogram(base_data, bins=10, range=(df[feature].min(), df[feature].max()))
+            base_hist = base_hist / len(base_data)
+            base_hist = np.where(base_hist == 0, 0.0001, base_hist)
             
-            psi = np.sum((curr_hist - base_hist) * np.log(curr_hist / base_hist))
-            psi_values.append(psi)
+            for bin_idx in range(1, n_bins):
+                curr_data = df[df['time_bin'] == bin_idx][feature]
+                
+                # Use same bin edges for the current distribution
+                curr_hist, _ = np.histogram(curr_data, bins=base_edges)
+                curr_hist = curr_hist / len(curr_data)
+                curr_hist = np.where(curr_hist == 0, 0.0001, curr_hist)
+                
+                psi = np.sum((curr_hist - base_hist) * np.log(curr_hist / base_hist))
+                psi_values.append(psi)
+            
+            return {
+                'feature': feature,
+                'psi_values': psi_values,
+                'avg_psi': np.mean(psi_values),
+                'max_psi': np.max(psi_values)
+            }
+        except Exception as e:
+            print(f"\n计算特征 {feature} 的 PSI 时出错: {str(e)[:100]}")
+            return {
+                'feature': feature,
+                'psi_values': [],
+                'avg_psi': float('nan'),
+                'max_psi': float('nan')
+            }
+    
+    # Process features in parallel
+    results = []
+    with ThreadPoolExecutor(max_workers=n_jobs) as executor:
+        # Submit tasks to thread pool
+        future_to_feature = {executor.submit(calculate_feature_psi, feature): feature for feature in feature_cols}
         
+        # Show progress
+        for future in tqdm(as_completed(future_to_feature), total=len(feature_cols), desc="计算特征稳定性"):
+            feature = future_to_feature[future]
+            try:
+                result = future.result()
+                results.append(result)
+            except Exception as exc:
+                print(f'\n{feature} 生成异常: {exc}')
+    
+    # Convert results to dictionary
+    for result in results:
+        feature = result['feature']
         psi_results[feature] = {
-            'psi_values': psi_values,
-            'avg_psi': np.mean(psi_values),
-            'max_psi': np.max(psi_values)
+            'psi_values': result['psi_values'],
+            'avg_psi': result['avg_psi'],
+            'max_psi': result['max_psi']
         }
-    print()
     
     # Plot PSI values
     plt.figure(figsize=(12, 8))
@@ -83,7 +121,7 @@ def analyze_feature_stability(df: pd.DataFrame,
     plt.tight_layout()
     plt.savefig('feature_stability_psi.png')
     
-    print("\n特征稳定性分析结果:")
+    print(f"\n特征稳定性分析结果 (耗时: {time.time() - start_time:.2f}秒):")
     for feature in feature_cols:
         avg_psi = psi_results[feature]['avg_psi']
         stability = "稳定" if avg_psi < 0.1 else "轻微变化" if avg_psi < 0.25 else "显著变化"
