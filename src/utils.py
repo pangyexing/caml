@@ -13,13 +13,13 @@ import time
 import json
 import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Optional, Union, Any
-from config import ensure_dirs, MODEL_DIR, TUNING_DIR, RESULTS_DIR, ID_COLS, LABEL_COLS, EXCLUDE_COLS as CONFIG_EXCLUDE_COLS
+from config import ensure_dirs, MODEL_DIR, TUNING_DIR, RESULTS_DIR, ID_COLS, LABEL_COLS, EXCLUDE_COLS 
 
 # Use ID_COLS from config instead of redefining ESSENTIAL_COLS
 # LABEL_COLS is now imported from config
 
 # Extend the EXCLUDE_COLS from config to include 'score' which is only needed in utils
-EXCLUDE_COLS = CONFIG_EXCLUDE_COLS + ['score']
+# EXCLUDE_COLS = CONFIG_EXCLUDE_COLS + ['score']
 
 # Directory constants are now imported from config
 
