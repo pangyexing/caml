@@ -11,6 +11,7 @@ import sys
 import argparse
 import time
 import pandas as pd
+import json
 from typing import Dict, List, Tuple, Optional, Union, Any
 
 # Import local modules
@@ -65,6 +66,11 @@ def parse_args():
     
     parser.add_argument('--max-evals', type=int, default=50,
                         help='Maximum evaluations for hyperparameter tuning (default: 50)')
+    
+    parser.add_argument('--resume-from', type=str, default=None,
+                        choices=['start', 'preprocess', 'initial_model', 'feature_analysis', 
+                                'feature_selection', 'final_model', 'deployment'],
+                        help='Resume training from a specific stage (for train mode)')
     
     return parser.parse_args()
 
@@ -136,13 +142,14 @@ def run_data_merge(feature_files: List[str], sample_file1: str, sample_file2: st
     return merged_df
 
 @timer
-def run_training(data_file: str, target: str = DEFAULT_TARGET):
+def run_training(data_file: str, target: str = DEFAULT_TARGET, resume_from: str = None):
     """
-    Run model training pipeline.
+    Run model training pipeline with checkpointing support.
     
     Args:
         data_file: Data file path
         target: Target variable
+        resume_from: Stage to resume from (None means auto-detect or start from beginning)
         
     Returns:
         Training results or None if error
@@ -150,44 +157,107 @@ def run_training(data_file: str, target: str = DEFAULT_TARGET):
     print(f"\n=== Running training pipeline for target: {target} ===")
     
     # Create output directories
-    ensure_dirs()
+    dirs = ensure_dirs()
+    checkpoint_dir = os.path.join(dirs['model_dir'], 'checkpoints', target)
+    os.makedirs(checkpoint_dir, exist_ok=True)
     
-    # Load data
-    try:
-        print(f"Loading data from {data_file}...")
-        merged_df = pd.read_csv(data_file)
-        print(f"Loaded data shape: {merged_df.shape}")
-    except Exception as e:
-        print(f"Error loading data: {e}")
-        return None
+    # If resuming and train/test data is already saved, we can skip data loading
+    train_path = os.path.join(RESULTS_DIR, "train_data.csv")
+    test_path = os.path.join(RESULTS_DIR, "test_data.csv")
+    checkpoint_status_file = os.path.join(checkpoint_dir, 'pipeline_status.json')
     
-    # Analyze label distribution
-    label_stats = analyze_label_distribution(merged_df, target=target)
+    # Check if we're resuming from an existing checkpoint
+    if resume_from is None and os.path.exists(checkpoint_status_file):
+        try:
+            with open(checkpoint_status_file, 'r') as f:
+                checkpoint_status = json.load(f)
+                if checkpoint_status.get('current_stage') == 'completed':
+                    print("Training pipeline was already completed. To retrain, please specify a stage to resume from.")
+                    
+                    # Load final model path from checkpoint if available
+                    model_file = os.path.join(MODEL_DIR, f"{target}_final_model.pmml")
+                    feature_file = os.path.join(MODEL_DIR, f"{target}_selected_features.txt")
+                    
+                    if os.path.exists(model_file) and os.path.exists(feature_file):
+                        print(f"Model is available at: {model_file}")
+                        print(f"Selected features are available at: {feature_file}")
+                        
+                        # Return minimal results so main function knows it was successful
+                        return {
+                            'model_file': model_file,
+                            'feature_file': feature_file
+                        }
+                    else:
+                        print("Warning: Training completed but model files not found.")
+                        # Continue with training
+        except Exception as e:
+            print(f"Error reading checkpoint status: {e}")
     
-    # Split data by time
-    print("\nSplitting data by time...")
-    train_df, test_df, split_date = split_by_time(merged_df, train_ratio=0.8)
+    # Check if we need to load data from scratch or can use existing split
+    if resume_from is None or resume_from == 'start' or not (os.path.exists(train_path) and os.path.exists(test_path)):
+        # Load data
+        try:
+            print(f"Loading data from {data_file}...")
+            merged_df = pd.read_csv(data_file)
+            print(f"Loaded data shape: {merged_df.shape}")
+        except Exception as e:
+            print(f"Error loading data: {e}")
+            return None
+        
+        # Analyze label distribution
+        label_stats = analyze_label_distribution(merged_df, target=target)
+        
+        # Split data by time
+        print("\nSplitting data by time...")
+        train_df, test_df, split_date = split_by_time(merged_df, train_ratio=0.8)
+        
+        # Save split datasets for later reuse
+        os.makedirs(RESULTS_DIR, exist_ok=True)
+        train_df.to_csv(train_path, index=False)
+        test_df.to_csv(test_path, index=False)
+        
+        print(f"Training data saved to: {train_path}")
+        print(f"Testing data saved to: {test_path}")
+    else:
+        # Load existing split data
+        try:
+            print(f"Loading training data from {train_path}...")
+            train_df = pd.read_csv(train_path)
+            print(f"Loaded training data shape: {train_df.shape}")
+            
+            print(f"Loading testing data from {test_path}...")
+            test_df = pd.read_csv(test_path)
+            print(f"Loaded testing data shape: {test_df.shape}")
+        except Exception as e:
+            print(f"Error loading split data: {e}")
+            return None
     
-    # Save split datasets for later reuse
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    train_df.to_csv(os.path.join(RESULTS_DIR, "train_data.csv"), index=False)
-    test_df.to_csv(os.path.join(RESULTS_DIR, "test_data.csv"), index=False)
-    
-    # Run two-stage modeling pipeline
+    # Run two-stage modeling pipeline with checkpointing
     print("\nRunning two-stage modeling pipeline...")
-    result = two_stage_modeling_pipeline(train_df, test_df, target=target)
+    result = two_stage_modeling_pipeline(
+        train_df, 
+        test_df, 
+        target=target,
+        resume_from=resume_from,
+        checkpoint_dir=checkpoint_dir
+    )
+    
+    if result is None:
+        print("\nTraining pipeline failed. To resume from where it left off, run again without specifying resume_from.")
+        return None
     
     # Save training results
     print("\nSaving training results...")
     export_model_summary(result, os.path.join(RESULTS_DIR, f"{target}_training_summary.txt"))
     
     # Plot metrics comparison
-    plot_metrics_comparison(
-        result['initial_metrics'], 
-        result['final_metrics'], 
-        title=f"{target.capitalize()} Model Improvement", 
-        output_file=os.path.join(RESULTS_DIR, f"{target}_metrics_comparison.png")
-    )
+    if 'initial_metrics' in result and 'final_metrics' in result:
+        plot_metrics_comparison(
+            result['initial_metrics'], 
+            result['final_metrics'], 
+            title=f"{target.capitalize()} Model Improvement", 
+            output_file=os.path.join(RESULTS_DIR, f"{target}_metrics_comparison.png")
+        )
     
     print(f"\nTraining pipeline completed successfully.")
     print(f"Model saved to: {result['model_file']}")
@@ -349,7 +419,7 @@ def main():
                 print("Error: Data file must be provided in train mode.")
                 sys.exit(1)
             
-            run_training(args.data, args.target)
+            run_training(args.data, args.target, args.resume_from)
         
         elif args.mode == 'tune':
             run_hyperparameter_tuning(args.target, args.max_evals)
