@@ -442,8 +442,7 @@ def get_shap_interactions(
         return []
         
     try:
-        # Sample data for interaction analysis
-        interaction_sample_size = min(500, len(pos_samples))
+        interaction_sample_size = min(1000, len(pos_samples))
         interaction_sample = pos_samples.sample(interaction_sample_size, random_state=42)
         
         # Limit features to reduce computation complexity
@@ -453,35 +452,55 @@ def get_shap_interactions(
         
         # Ensure we only use valid feature columns, filtering out any excluded columns
         feature_cols = [col for col in interaction_sample.columns if col not in EXCLUDE_COLS]
-        X_interaction = interaction_sample[feature_cols].copy()
         
-        print(f"特征交互分析使用的特征数量: {len(feature_cols)}")
+        # Filter to only include top feature subset that exists in our dataset
+        valid_top_features = [feat for feat in top_features_subset if feat in feature_cols]
+        X_interaction = interaction_sample[valid_top_features].copy()
         
-        # Memory estimation check - use full feature count for memory estimate
-        estimated_memory = len(X_interaction) * len(feature_cols) * len(top_features_subset) * 8 / (1024 * 1024)
+        print(f"特征交互分析使用的特征数量: {len(valid_top_features)}")
+        
+        # Memory estimation check
+        estimated_memory = len(X_interaction) * len(valid_top_features) * len(valid_top_features) * 8 / (1024 * 1024)
         print(f"估计内存需求: 约 {estimated_memory:.2f} MB")
         
-        # Calculate SHAP interaction values
+        # Calculate SHAP interaction values in batches to reduce memory usage
         explainer = shap.TreeExplainer(model)
-        interaction_values = explainer.shap_interaction_values(X_interaction)
         
-        # Get indices of the top features we want to analyze
-        # Make sure they exist in our filtered feature set
-        valid_top_features = [feat for feat in top_features_subset if feat in X_interaction.columns]
-        feature_indices = [list(X_interaction.columns).index(feat) for feat in valid_top_features]
+        # Define batch size based on available memory
+        batch_size = 50  # Start with a small batch size
+        n_batches = (len(X_interaction) + batch_size - 1) // batch_size
+        print(f"将样本分为 {n_batches} 批进行处理，每批 {batch_size} 个样本")
         
-        # Process interaction values - only for our subset of top features
-        interaction_sum = np.zeros((len(feature_indices), len(feature_indices)))
-        for i, idx_i in enumerate(feature_indices):
-            for j, idx_j in enumerate(feature_indices):
-                interaction_sum[i, j] = np.abs(interaction_values[:, idx_i, idx_j]).sum()
+        # Initialize tensor to accumulate interaction sums
+        # Shape: [n_features, n_features]
+        interaction_sum = np.zeros((len(valid_top_features), len(valid_top_features)))
+        
+        # Process in batches
+        for i in range(n_batches):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, len(X_interaction))
+            print(f"处理批次 {i+1}/{n_batches}，样本 {start_idx} 到 {end_idx-1}")
+            
+            # Get batch data
+            X_batch = X_interaction.iloc[start_idx:end_idx]
+            
+            # Calculate SHAP interaction values for this batch
+            batch_interaction_values = explainer.shap_interaction_values(X_batch)
+            
+            # Add absolute sums to our accumulator
+            for j in range(batch_interaction_values.shape[0]):  # For each sample in batch
+                interaction_sum += np.abs(batch_interaction_values[j])
+            
+            # Force garbage collection to free memory
+            import gc
+            gc.collect()
         
         # Extract and sort interactions
         interaction_scores = []
-        for i, idx_i in enumerate(feature_indices):
-            feat_i = X_interaction.columns[idx_i]
-            for j, idx_j in enumerate(feature_indices):
-                feat_j = X_interaction.columns[idx_j]
+        for i in range(len(valid_top_features)):
+            feat_i = valid_top_features[i]
+            for j in range(len(valid_top_features)):
+                feat_j = valid_top_features[j]
                 if i < j:  # Only include each pair once
                     interaction_scores.append((feat_i, feat_j, interaction_sum[i, j]))
         
