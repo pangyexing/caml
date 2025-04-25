@@ -53,7 +53,7 @@ from src.model_utils import (
     load_feature_list
 )
 # Import configuration module
-from src.config import FEATURE_SELECTION_PARAMS, FEATURE_SELECTION_WEIGHTS, MODEL_DIR
+from src.config import FEATURE_SELECTION_PARAMS, FEATURE_SELECTION_WEIGHTS, MODEL_DIR, EXCLUDE_COLS
 # Import deployment functions
 from src.deployment import deploy_model
 
@@ -356,9 +356,10 @@ def analyze_feature_interactions(
     target: str,
     initial_model: XGBClassifier,
     initial_features: List[str],
-    top_n_features: int = 30,
-    max_interactions: int = 15,
-    sample_size: int = 1000
+    top_n_features: int = 50,
+    max_interactions: int = 25,
+    sample_size: int = 2000,
+    skip_shap_interactions: bool = False
 ) -> List[Tuple[str, str]]:
     """
     Analyze feature interactions to identify pairs with strong predictive power for positive samples.
@@ -372,6 +373,7 @@ def analyze_feature_interactions(
         top_n_features: Number of top features to consider for interactions
         max_interactions: Maximum number of interactions to return
         sample_size: Sample size for analysis
+        skip_shap_interactions: If True, skip SHAP interaction calculation
         
     Returns:
         List of feature pairs (tuples) with strong interactions
@@ -379,134 +381,196 @@ def analyze_feature_interactions(
     import shap
     from itertools import combinations
     from sklearn.metrics import roc_auc_score
+    from sklearn.ensemble import RandomForestClassifier
     
     print("\n=== 特征交互分析 ===")
     
-    # Extract positive samples from test set
+    # Extract and sample positive instances
     pos_samples = test_df[test_df[target] == 1].copy()
-    
     if len(pos_samples) < 10:
         print(f"正样本数量过少 ({len(pos_samples)}), 跳过特征交互分析")
         return []
     
-    # Limit sample size if needed
     if len(pos_samples) > sample_size:
         pos_samples = pos_samples.sample(sample_size, random_state=42)
     
-    # Get features only
-    X_pos = pos_samples[initial_features]
-    
-    # Get top important features according to model
+    # Get top important features
     feature_importance = initial_model.get_booster().get_score(importance_type='gain')
     top_features = sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)[:top_n_features]
     top_feature_names = [f for f, _ in top_features]
     
     print(f"使用前 {len(top_feature_names)} 个重要特征进行交互分析...")
     
-    # Approach 1: Use SHAP interaction values to find important feature interactions
-    try:
-        print("计算SHAP交互值...")
-        # Use a smaller sample for interaction analysis as it's computationally expensive
-        interaction_sample_size = min(500, len(pos_samples))
-        interaction_sample = pos_samples.sample(interaction_sample_size, random_state=42)
-        X_interaction = interaction_sample[top_feature_names]
+    # Approach 1: SHAP interaction values
+    shap_interactions = get_shap_interactions(
+        pos_samples, 
+        initial_model, 
+        top_feature_names, 
+        skip_shap_interactions, 
+        max_interactions
+    )
+    
+    # Approach 2: Evaluate feature pairs with simple models
+    model_interactions = get_model_interactions(
+        test_df, 
+        target, 
+        top_feature_names, 
+        max_interactions
+    )
+    
+    # Merge interaction lists with priority to SHAP interactions
+    all_interactions = combine_interactions(
+        shap_interactions, 
+        model_interactions, 
+        max_interactions
+    )
+    
+    print(f"\n识别出 {len(all_interactions)} 个重要的特征交互对")
+    return all_interactions
+
+def get_shap_interactions(
+    pos_samples: pd.DataFrame, 
+    model: XGBClassifier, 
+    top_feature_names: List[str], 
+    skip_shap: bool, 
+    max_interactions: int
+) -> List[Tuple[str, str]]:
+    """Get feature interactions using SHAP values"""
+    
+    if skip_shap:
+        print("已配置跳过SHAP交互值计算，仅使用替代方法分析特征交互")
+        return []
         
-        # Initialize SHAP explainer and compute interaction values
-        explainer = shap.TreeExplainer(initial_model)
+    try:
+        # Sample data for interaction analysis
+        interaction_sample_size = min(1000, len(pos_samples))
+        interaction_sample = pos_samples.sample(interaction_sample_size, random_state=42)
+        
+        # Limit features to reduce computation complexity
+        max_features_for_interaction = min(25, len(top_feature_names))
+        top_features_subset = top_feature_names[:max_features_for_interaction]
+        print(f"为降低计算复杂度，仅使用前 {max_features_for_interaction} 个特征和 {interaction_sample_size} 个样本分析交互")
+        
+        # Ensure we only use valid feature columns, filtering out any excluded columns
+        feature_cols = [col for col in interaction_sample.columns if col not in EXCLUDE_COLS]
+        X_interaction = interaction_sample[feature_cols].copy()
+        
+        print(f"特征交互分析使用的特征数量: {len(feature_cols)}")
+        
+        # Memory estimation check - use full feature count for memory estimate
+        estimated_memory = len(X_interaction) * len(feature_cols) * len(top_features_subset) * 8 / (1024 * 1024)
+        print(f"估计内存需求: 约 {estimated_memory:.2f} MB")
+        
+        # Calculate SHAP interaction values
+        explainer = shap.TreeExplainer(model)
         interaction_values = explainer.shap_interaction_values(X_interaction)
         
-        # Sum absolute interaction values across samples
-        interaction_sum = np.abs(interaction_values).sum(axis=0)
+        # Get indices of the top features we want to analyze
+        # Make sure they exist in our filtered feature set
+        valid_top_features = [feat for feat in top_features_subset if feat in X_interaction.columns]
+        feature_indices = [list(X_interaction.columns).index(feat) for feat in valid_top_features]
         
-        # Extract top interactions (excluding self-interactions)
+        # Process interaction values - only for our subset of top features
+        interaction_sum = np.zeros((len(feature_indices), len(feature_indices)))
+        for i, idx_i in enumerate(feature_indices):
+            for j, idx_j in enumerate(feature_indices):
+                interaction_sum[i, j] = np.abs(interaction_values[:, idx_i, idx_j]).sum()
+        
+        # Extract and sort interactions
         interaction_scores = []
-        for i, feat_i in enumerate(top_feature_names):
-            for j, feat_j in enumerate(top_feature_names):
+        for i, idx_i in enumerate(feature_indices):
+            feat_i = X_interaction.columns[idx_i]
+            for j, idx_j in enumerate(feature_indices):
+                feat_j = X_interaction.columns[idx_j]
                 if i < j:  # Only include each pair once
-                    interaction_scores.append(
-                        (feat_i, feat_j, interaction_sum[i, j] + interaction_sum[j, i])
-                    )
+                    interaction_scores.append((feat_i, feat_j, interaction_sum[i, j]))
         
-        # Sort interactions by score
         interaction_scores.sort(key=lambda x: x[2], reverse=True)
-        
         shap_interactions = [(f1, f2) for f1, f2, _ in interaction_scores[:max_interactions]]
         
+        # Print top interactions
         print("\n基于SHAP交互值的重要特征对:")
         for i, (f1, f2, score) in enumerate(interaction_scores[:10]):
             print(f"  {i+1}. {f1} × {f2}: {score:.6f}")
             
+        return shap_interactions
+        
     except Exception as e:
         print(f"SHAP交互值分析出错: {e}")
-        shap_interactions = []
+        return []
+
+def get_model_interactions(
+    test_df: pd.DataFrame,
+    target: str,
+    top_feature_names: List[str],
+    max_interactions: int
+) -> List[Tuple[str, str]]:
+    """Identify feature interactions using simple models"""
+    from itertools import combinations
+    from sklearn.metrics import roc_auc_score
+    from sklearn.ensemble import RandomForestClassifier
     
-    # Approach 2: Evaluate feature pairs using simple models
     print("\n评估特征对的预测能力...")
     
-    # Get a balanced sample for pair evaluation
+    # Get a balanced sample for evaluation
     pos_eval = test_df[test_df[target] == 1].sample(
-        min(200, test_df[target].sum()), 
+        min(300, test_df[target].sum()), 
         random_state=42
     )
     neg_eval = test_df[test_df[target] == 0].sample(
-        min(200, len(test_df) - test_df[target].sum()), 
+        min(300, len(test_df) - test_df[target].sum()), 
         random_state=42
     )
     eval_sample = pd.concat([pos_eval, neg_eval])
     y_eval = eval_sample[target]
     
-    # Function to evaluate feature pair
-    def evaluate_feature_pair(feat1, feat2):
-        try:
-            # Create product interaction
-            X_pair = eval_sample[[feat1, feat2]].copy()
-            
-            # Fill missing values with zeros
-            X_pair.fillna(0, inplace=True)
-            
-            # Create interaction feature
-            X_pair['interaction'] = X_pair[feat1] * X_pair[feat2]
-            
-            # Train a simple model using just these features
-            from sklearn.ensemble import RandomForestClassifier
-            clf = RandomForestClassifier(n_estimators=50, max_depth=3, random_state=42)
-            clf.fit(X_pair, y_eval)
-            
-            # Predict and evaluate
-            y_pred = clf.predict_proba(X_pair)[:, 1]
-            auc_score = roc_auc_score(y_eval, y_pred)
-            
-            # Get feature importance to see if interaction is useful
-            importances = clf.feature_importances_
-            interaction_importance = importances[2]  # importance of interaction feature
-            
-            return auc_score, interaction_importance
-        except Exception as e:
-            print(f"评估特征对 {feat1} × {feat2} 出错: {e}")
-            return 0.5, 0.0
-    
-    # Evaluate all pairs from top features
-    feature_pairs = list(combinations(top_feature_names[:15], 2))
+    # Evaluate feature pairs
+    feature_pairs = list(combinations(top_feature_names[:20], 2))
     pair_scores = []
     
     for feat1, feat2 in feature_pairs:
-        auc_score, interaction_importance = evaluate_feature_pair(feat1, feat2)
-        # Only consider pairs where interaction has meaningful contribution
-        if interaction_importance > 0.1:
-            pair_scores.append((feat1, feat2, auc_score, interaction_importance))
+        try:
+            # Create product interaction
+            X_pair = eval_sample[[feat1, feat2]].copy()
+            X_pair.fillna(0, inplace=True)
+            X_pair['interaction'] = X_pair[feat1] * X_pair[feat2]
+            
+            # Train a simple model
+            clf = RandomForestClassifier(n_estimators=50, max_depth=3, random_state=42)
+            clf.fit(X_pair, y_eval)
+            
+            # Evaluate performance
+            y_pred = clf.predict_proba(X_pair)[:, 1]
+            auc_score = roc_auc_score(y_eval, y_pred)
+            
+            # Check if interaction feature is important
+            interaction_importance = clf.feature_importances_[2]
+            
+            if interaction_importance > 0.1:
+                pair_scores.append((feat1, feat2, auc_score, interaction_importance))
+                
+        except Exception as e:
+            print(f"评估特征对 {feat1} × {feat2} 出错: {e}")
     
     # Sort by AUC score
     pair_scores.sort(key=lambda x: x[2], reverse=True)
     
+    # Print top interactions
     print("\n基于模型评估的重要特征对:")
     for i, (f1, f2, auc, imp) in enumerate(pair_scores[:10]):
         print(f"  {i+1}. {f1} × {f2}: AUC={auc:.4f}, 交互重要性={imp:.4f}")
     
-    # Combine results from both approaches
-    model_interactions = [(f1, f2) for f1, f2, _, _ in pair_scores[:max_interactions]]
-    
-    # Merge interaction lists with priority to SHAP interactions
+    return [(f1, f2) for f1, f2, _, _ in pair_scores[:max_interactions]]
+
+def combine_interactions(
+    shap_interactions: List[Tuple[str, str]],
+    model_interactions: List[Tuple[str, str]],
+    max_interactions: int
+) -> List[Tuple[str, str]]:
+    """Combine interactions from different methods with deduplication"""
     all_interactions = []
+    
+    # Add SHAP interactions first (priority)
     all_interactions.extend(shap_interactions)
     
     # Add model interactions not already in the list
@@ -515,10 +579,7 @@ def analyze_feature_interactions(
             all_interactions.append(pair)
     
     # Limit to max interactions
-    all_interactions = all_interactions[:max_interactions]
-    
-    print(f"\n识别出 {len(all_interactions)} 个重要的特征交互对")
-    return all_interactions
+    return all_interactions[:max_interactions]
 
 def two_stage_modeling_pipeline(train_df: pd.DataFrame, 
                                test_df: pd.DataFrame, 
@@ -569,15 +630,19 @@ def two_stage_modeling_pipeline(train_df: pd.DataFrame,
         current_stage = 'start'
         
     # Update checkpoint status
-    def update_checkpoint_status(stage):
+    def update_checkpoint_status(stage, status='completed', checkpoint_dir=None):
         try:
             checkpoint_status = {
                 'current_stage': stage,
                 'last_updated': datetime.now().isoformat(),
-                'target': target
+                'target': target,
+                'status': status
             }
-            with open(checkpoint_status_file, 'w') as f:
-                json.dump(checkpoint_status, f)
+            if checkpoint_dir:
+                os.makedirs(checkpoint_dir, exist_ok=True)
+                checkpoint_status_file = os.path.join(checkpoint_dir, 'pipeline_status.json')
+                with open(checkpoint_status_file, 'w') as f:
+                    json.dump(checkpoint_status, f)
             print(f"Updated checkpoint status to: {stage}")
         except Exception as e:
             print(f"Warning: Failed to update checkpoint status: {e}")
@@ -678,117 +743,275 @@ def two_stage_modeling_pipeline(train_df: pd.DataFrame,
     must_include_features = []
     
     if current_stage in ['feature_analysis']:
-        update_checkpoint_status('feature_analysis')
-        try:
-            # Analyze feature stability
-            print("\n分析特征稳定性...")
-            psi_results = analyze_feature_stability(train_df_processed, time_column='recall_date', n_bins=5)
-            
-            # Analyze feature statistics
-            print("\n分析特征统计指标...")
-            feature_stats = analyze_features_for_selection_parallel(
-                train_df_processed, initial_features, target=target, n_jobs=4
-            )
-            
-            # Find important features for positive sample prediction
-            print("\n识别对正样本预测有重要作用的特征...")
-            
-            # Use SHAP values to find features with highest contribution to positive samples
+        update_checkpoint_status('feature_analysis', 'started', checkpoint_dir)
+        
+        # 定义特征分析的子步骤
+        feature_analysis_steps = [
+            'psi_analysis',
+            'feature_stats', 
+            'shap_analysis',
+            'subgroup_analysis',
+            'interaction_analysis'
+        ]
+        
+        # 子步骤状态文件
+        feature_analysis_status_file = os.path.join(checkpoint_dir, f"{target}_feature_analysis_status.json")
+        feature_results = {}
+        
+        # 初始化或加载子步骤状态
+        if os.path.exists(feature_analysis_status_file):
             try:
+                with open(feature_analysis_status_file, 'r') as f:
+                    feature_results = json.load(f)
+                print(f"已加载特征分析中间结果，已完成步骤: {list(feature_results.keys())}")
+            except Exception as e:
+                print(f"加载特征分析状态失败: {e}")
+                feature_results = {}
+        
+        # 步骤1: PSI分析
+        if 'psi_analysis' not in feature_results or not feature_results['psi_analysis'].get('completed', False):
+            try:
+                print("\n分析特征稳定性...")
+                psi_results = analyze_feature_stability(train_df_processed, time_column='recall_date', n_bins=5)
+                feature_results['psi_analysis'] = {
+                    'completed': True,
+                    'psi_results': psi_results
+                }
+                # 保存中间结果
+                with open(feature_analysis_status_file, 'w') as f:
+                    json.dump(feature_results, f)
+                print("特征稳定性分析完成")
+            except Exception as e:
+                print(f"特征稳定性分析失败: {e}")
+                feature_results['psi_analysis'] = {'completed': False, 'error': str(e)}
+                with open(feature_analysis_status_file, 'w') as f:
+                    json.dump(feature_results, f)
+                return None
+        else:
+            psi_results = feature_results['psi_analysis'].get('psi_results', {})
+        
+        # 步骤2: 特征统计分析
+        if 'feature_stats' not in feature_results or not feature_results['feature_stats'].get('completed', False):
+            try:
+                print("\n分析特征统计指标...")
+                feature_stats = analyze_features_for_selection_parallel(
+                    train_df_processed, initial_features, target=target, n_jobs=4
+                )
+                # 将DataFrame转换为可JSON序列化的字典
+                feature_stats_dict = feature_stats.to_dict('records')
+                feature_results['feature_stats'] = {
+                    'completed': True,
+                    'feature_stats': feature_stats_dict
+                }
+                # 保存中间结果
+                with open(feature_analysis_status_file, 'w') as f:
+                    json.dump(feature_results, f)
+                print("特征统计指标分析完成")
+            except Exception as e:
+                print(f"特征统计指标分析失败: {e}")
+                feature_results['feature_stats'] = {'completed': False, 'error': str(e)}
+                with open(feature_analysis_status_file, 'w') as f:
+                    json.dump(feature_results, f)
+                return None
+        else:
+            feature_stats = feature_results['feature_stats'].get('feature_stats', {})
+            feature_stats = pd.DataFrame(feature_stats)
+        
+        # 步骤3: SHAP分析
+        if 'shap_analysis' not in feature_results or not feature_results['shap_analysis'].get('completed', False):
+            try:
+                print("\n识别对正样本预测有重要作用的特征...")
+                
+                # 实现SHAP分析，包含内存监控和分批处理
                 from joblib import load, dump
                 import shap
+                import gc
+                import psutil
                 
-                # Create small sample for SHAP analysis
+                # 创建SHAP分析样本
                 sample_size = min(1000, len(test_df_processed))
                 sampled_indices = np.random.choice(len(test_df_processed), sample_size, replace=False)
                 X_sample = test_df_processed.iloc[sampled_indices][initial_features]
                 
                 shap_file = os.path.join(MODEL_DIR, f"{target}_initial_shap.joblib")
                 
-                # Load cached SHAP values if available
+                # 加载缓存的SHAP值
+                shap_values = None
                 if os.path.exists(shap_file):
-                    print(f"加载缓存的SHAP值: {shap_file}")
-                    shap_values = load(shap_file)
-                else:
-                    print("计算SHAP值...")
-                    explainer = shap.TreeExplainer(initial_model)
-                    shap_values = explainer.shap_values(X_sample)
-                    
-                    # Cache SHAP values
-                    os.makedirs(MODEL_DIR, exist_ok=True)
-                    dump(shap_values, shap_file)
-                    print(f"SHAP值已缓存至: {shap_file}")
+                    try:
+                        print(f"加载缓存的SHAP值: {shap_file}")
+                        shap_values = load(shap_file)
+                    except Exception as e:
+                        print(f"加载SHAP值失败: {e}，将重新计算")
                 
-                # Analyze SHAP values for positive samples
+                # 计算SHAP值，添加内存监控
+                if shap_values is None:
+                    print("计算SHAP值...")
+                    # 记录内存使用情况
+                    mem = psutil.virtual_memory()
+                    print(f"当前内存使用: {mem.percent}%，可用: {mem.available/1024/1024/1024:.2f}GB")
+                    
+                    # 如果内存不足，减少样本量
+                    if mem.available < 2*1024*1024*1024:  # 少于2GB可用内存
+                        old_sample_size = len(X_sample)
+                        X_sample = X_sample.iloc[:min(500, len(X_sample))]
+                        print(f"内存不足，减少样本量: {old_sample_size} -> {len(X_sample)}")
+                    
+                    try:
+                        explainer = shap.TreeExplainer(initial_model)
+                        shap_values = explainer.shap_values(X_sample)
+                        
+                        # 缓存SHAP值
+                        os.makedirs(MODEL_DIR, exist_ok=True)
+                        dump(shap_values, shap_file)
+                        print(f"SHAP值已缓存至: {shap_file}")
+                    except MemoryError as me:
+                        print(f"SHAP计算内存不足: {me}")
+                        # 更激进地减少样本量并重试
+                        X_sample = X_sample.iloc[:min(200, len(X_sample))]
+                        print(f"内存不足，减少样本量至 {len(X_sample)} 并重试")
+                        gc.collect()
+                        explainer = shap.TreeExplainer(initial_model)
+                        shap_values = explainer.shap_values(X_sample)
+                
+                # 分析正样本的SHAP值
                 pos_samples = test_df_processed[test_df_processed[target] == 1].index
                 pos_indices = [i for i in range(len(sampled_indices)) if sampled_indices[i] in pos_samples]
                 
+                shap_features = []
                 if pos_indices:
                     print(f"使用 {len(pos_indices)} 个正样本进行SHAP分析...")
                     pos_shap = np.abs(shap_values)[pos_indices].mean(axis=0)
                     pos_shap_dict = dict(zip(initial_features, pos_shap))
                     
-                    # Get top SHAP features
+                    # 获取顶部SHAP特征
                     top_shap_features = sorted(pos_shap_dict.items(), key=lambda x: x[1], reverse=True)[:30]
                     shap_features = [f for f, _ in top_shap_features]
                     
                     print("\n基于SHAP值对正样本预测最重要的前20个特征:")
                     for f, v in top_shap_features[:20]:
                         print(f"  {f}: {v:.6f}")
-                    
-                    must_include_features.extend(shap_features)
-                    
-                    # Perform positive sample subgroup analysis
-                    print("\n执行正样本子群体分析...")
-                    subgroup_features = analyze_positive_sample_subgroups(
-                        train_df_processed, 
-                        test_df_processed, 
-                        initial_features, 
-                        target, 
-                        initial_model
-                    )
-                    
-                    # Perform feature interaction analysis
-                    print("\n执行特征交互分析...")
-                    important_interactions = analyze_feature_interactions(
-                        train_df_processed,
-                        test_df_processed,
-                        target,
-                        initial_model,
-                        initial_features
-                    )
-                    
-                    # Extract individual features from interactions
-                    interaction_features = []
-                    for feat1, feat2 in important_interactions:
-                        interaction_features.extend([feat1, feat2])
-                    
-                    # Add interaction features to must-include list
-                    must_include_features.extend(interaction_features)
-                    
-                    # Add subgroup features to must-include list
-                    must_include_features.extend(subgroup_features)
-                    
-                    # Ensure uniqueness of must-include features
-                    must_include_features = list(set(must_include_features))
-                    print(f"合并后必须包含的特征数量: {len(must_include_features)}")
+                
+                feature_results['shap_analysis'] = {
+                    'completed': True,
+                    'shap_features': shap_features
+                }
+                # 保存中间结果
+                with open(feature_analysis_status_file, 'w') as f:
+                    json.dump(feature_results, f)
+                print("SHAP分析完成")
+                
+                # 清理内存
+                del shap_values
+                gc.collect()
             except Exception as e:
-                print(f"SHAP分析出错: {e}")
+                print(f"SHAP分析失败: {e}")
+                feature_results['shap_analysis'] = {'completed': False, 'error': str(e)}
+                with open(feature_analysis_status_file, 'w') as f:
+                    json.dump(feature_results, f)
+        else:
+            shap_features = feature_results['shap_analysis'].get('shap_features', [])
+        
+        # 步骤4: 子群体分析
+        if 'subgroup_analysis' not in feature_results or not feature_results['subgroup_analysis'].get('completed', False):
+            try:
+                print("\n执行正样本子群体分析...")
+                subgroup_features = analyze_positive_sample_subgroups(
+                    train_df_processed, 
+                    test_df_processed, 
+                    initial_features, 
+                    target, 
+                    initial_model
+                )
+                
+                feature_results['subgroup_analysis'] = {
+                    'completed': True,
+                    'subgroup_features': subgroup_features
+                }
+                # 保存中间结果
+                with open(feature_analysis_status_file, 'w') as f:
+                    json.dump(feature_results, f)
+                print("子群体分析完成")
+            except Exception as e:
+                print(f"子群体分析失败: {e}")
+                feature_results['subgroup_analysis'] = {'completed': False, 'error': str(e)}
+                with open(feature_analysis_status_file, 'w') as f:
+                    json.dump(feature_results, f)
+        else:
+            subgroup_features = feature_results['subgroup_analysis'].get('subgroup_features', [])
+        
+        # 步骤5: 特征交互分析
+        if 'interaction_analysis' not in feature_results or not feature_results['interaction_analysis'].get('completed', False):
+            try:
+                print("\n执行特征交互分析...")
+                important_interactions = analyze_feature_interactions(
+                    train_df_processed,
+                    test_df_processed,
+                    target,
+                    initial_model,
+                    initial_features,
+                    skip_shap_interactions=False 
+                )
+                
+                # 提取交互特征
+                interaction_features = []
+                for feat1, feat2 in important_interactions:
+                    interaction_features.extend([feat1, feat2])
+                
+                feature_results['interaction_analysis'] = {
+                    'completed': True,
+                    'interaction_features': interaction_features
+                }
+                # 保存中间结果
+                with open(feature_analysis_status_file, 'w') as f:
+                    json.dump(feature_results, f)
+                print("特征交互分析完成")
+            except Exception as e:
+                print(f"特征交互分析失败: {e}")
+                feature_results['interaction_analysis'] = {'completed': False, 'error': str(e)}
+                with open(feature_analysis_status_file, 'w') as f:
+                    json.dump(feature_results, f)
+        else:
+            interaction_features = feature_results['interaction_analysis'].get('interaction_features', [])
+        
+        # 汇总所有结果
+        try:
+            # 收集必须包含的特征
+            must_include_features = []
             
-            # Save feature analysis results
+            # 添加SHAP特征
+            if 'shap_analysis' in feature_results and feature_results['shap_analysis'].get('completed', False):
+                must_include_features.extend(feature_results['shap_analysis'].get('shap_features', []))
+            
+            # 添加子群体特征
+            if 'subgroup_analysis' in feature_results and feature_results['subgroup_analysis'].get('completed', False):
+                must_include_features.extend(feature_results['subgroup_analysis'].get('subgroup_features', []))
+            
+            # 添加交互特征
+            if 'interaction_analysis' in feature_results and feature_results['interaction_analysis'].get('completed', False):
+                must_include_features.extend(feature_results['interaction_analysis'].get('interaction_features', []))
+            
+            # 确保特征唯一性
+            must_include_features = list(set(must_include_features))
+            print(f"合并后必须包含的特征数量: {len(must_include_features)}")
+            
+            # 保存特征分析结果
             with open(feature_analysis_file, 'wb') as f:
                 pickle.dump({
                     'psi_results': psi_results,
                     'feature_stats': feature_stats,
                     'must_include_features': must_include_features
                 }, f)
+            
+            # 更新总体checkpoint状态
+            update_checkpoint_status('feature_analysis', 'completed', checkpoint_dir)
             print("特征分析完成，已保存checkpoint")
             current_stage = 'feature_selection'
         except Exception as e:
-            print(f"特征分析失败: {e}")
+            print(f"汇总特征分析结果失败: {e}")
             return None
     elif current_stage not in ['start', 'preprocess', 'initial_model']:
-        # Load feature analysis from checkpoint
+        # 加载特征分析结果
         try:
             print("从checkpoint加载特征分析结果...")
             with open(feature_analysis_file, 'rb') as f:
