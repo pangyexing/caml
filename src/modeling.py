@@ -443,7 +443,7 @@ def get_shap_interactions(
         
     try:
         # Sample data for interaction analysis
-        interaction_sample_size = min(1000, len(pos_samples))
+        interaction_sample_size = min(500, len(pos_samples))
         interaction_sample = pos_samples.sample(interaction_sample_size, random_state=42)
         
         # Limit features to reduce computation complexity
