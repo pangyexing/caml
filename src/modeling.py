@@ -254,7 +254,7 @@ def analyze_positive_sample_subgroups(
     target: str,
     initial_model: XGBClassifier,
     n_clusters: int = 3,
-    sample_size: int = 1000
+    sample_size: int = 10000
 ) -> List[str]:
     """
     Analyze positive sample subgroups to identify features important for different types of positive samples.
