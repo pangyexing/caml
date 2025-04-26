@@ -1,18 +1,28 @@
 # Core dependencies
-numpy>=1.20.0
-pandas>=1.3.0
-matplotlib>=3.4.0
-scikit-learn>=1.0.0
-xgboost>=1.5.0
-joblib>=1.1.0
-tqdm>=4.62.0
+numpy>=1.16.0
+pandas>=1.0.0
+matplotlib>=3.0.0
+scikit-learn>=0.22.0
+xgboost>=0.90.0
+joblib>=0.14.0
+tqdm>=4.30.0
+psutil>=5.6.0
+seaborn>=0.9.0
 
-# Feature engineering
-shap>=0.40.0
+# Feature engineering and visualization
+shap>=0.35.0
 
 # Model export/import
-sklearn2pmml>=0.90.0
-pypmml>=0.9.14
+sklearn2pmml>=0.56.0
+pypmml>=0.9.0
 
 # Hyperparameter optimization
-hyperopt>=0.2.7 
+hyperopt>=0.2.3
+
+# Development tools
+black>=19.10b0
+isort>=4.3.21
+mypy>=0.770
+flake8>=3.7.0
+pytest>=5.0.0
+pytest-cov>=2.8.0 

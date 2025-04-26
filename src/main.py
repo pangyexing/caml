@@ -2,452 +2,280 @@
 # -*- coding: utf-8 -*-
 
 """
-Main script to run the model pipeline.
-Orchestrates data loading, preprocessing, modeling, and evaluation.
+Main executable script for customer conversion model.
 """
 
+import argparse
 import os
 import sys
-import argparse
-import time
+
 import pandas as pd
-import json
-from typing import Dict, List, Tuple, Optional, Union, Any
 
-# Import local modules
-from src.config import ensure_dirs, DEFAULT_TARGET, RESULTS_DIR, MODEL_DIR
-from src.preprocessing import (
-    preprocess_data, 
-    split_by_time,
-    check_duplicate_features,
-    check_duplicate_keys,
+from src.core.preprocessing import (
+    check_feature_files,
     merge_feature_files,
-    process_sample_files
+    preprocess_data,
 )
-from src.feature_engineering import analyze_feature_stability
-from src.modeling import two_stage_modeling_pipeline
-from src.hyperopt_tuning import HyperparameterOptimizer
-from src.deployment import deploy_model
-from src.utils import (
-    analyze_label_distribution,
-    export_model_summary,
-    plot_metrics_comparison,
-    timer
-)
+from src.models.deployment import batch_prediction, deploy_model, load_feature_list
+from src.models.hyperopt_tuning import hyperopt_xgb, plot_optimization_results
+from src.models.training import two_stage_modeling_pipeline
 
-def parse_args():
+
+def parse_arguments():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Run machine learning pipeline for customer conversion prediction.')
+    parser = argparse.ArgumentParser(description='Customer Conversion Model')
     
-    parser.add_argument('--mode', type=str, default='train', 
-                        choices=['train', 'tune', 'deploy', 'check'],
-                        help='Pipeline mode: train (default), tune, deploy, or check (data validation)')
+    # Mode argument
+    parser.add_argument('--mode', type=str, required=True, 
+                        choices=['check', 'merge', 'train', 'tune', 'deploy'],
+                        help='Operation mode')
     
-    parser.add_argument('--data', type=str, default='merged_data.csv',
-                        help='Path to merged data file (default: merged_data.csv)')
+    # Feature files arguments
+    parser.add_argument('--features', type=str, nargs='+',
+                        help='Feature files to process')
     
-    parser.add_argument('--features', type=str, nargs='+', default=None,
-                        help='Paths to feature files (for check or merge mode)')
+    # Sample files arguments
+    parser.add_argument('--sample1', type=str,
+                        help='First sample file')
+    parser.add_argument('--sample2', type=str,
+                        help='Second sample file')
     
-    parser.add_argument('--sample1', type=str, default=None,
-                        help='Path to first sample file (for merge mode)')
+    # Data file arguments
+    parser.add_argument('--data', type=str,
+                        help='Data file for training or deployment')
     
-    parser.add_argument('--sample2', type=str, default=None,
-                        help='Path to second sample file (for merge mode)')
+    # Target column
+    parser.add_argument('--target', type=str, default='label_apply',
+                        help='Target column name')
     
-    parser.add_argument('--target', type=str, default=DEFAULT_TARGET,
-                        help=f'Target variable (default: {DEFAULT_TARGET})')
+    # Resume from stage
+    parser.add_argument('--resume-from', type=str,
+                        choices=['start', 'initial_model', 'feature_analysis', 
+                                'feature_selection', 'final_model'],
+                        help='Resume training from a specific stage')
     
-    parser.add_argument('--model', type=str, default=None,
-                        help='Path to model file (for deploy mode)')
-    
-    parser.add_argument('--features-file', type=str, default=None,
-                        help='Path to feature list file (for deploy mode)')
-    
+    # Hyperparameter tuning
     parser.add_argument('--max-evals', type=int, default=50,
-                        help='Maximum evaluations for hyperparameter tuning (default: 50)')
+                        help='Maximum number of hyperparameter evaluations')
     
-    parser.add_argument('--resume-from', type=str, default=None,
-                        choices=['start', 'preprocess', 'initial_model', 'feature_analysis', 
-                                'feature_selection', 'final_model', 'deployment'],
-                        help='Resume training from a specific stage (for train mode)')
+    # Deployment
+    parser.add_argument('--model', type=str,
+                        help='Model file for deployment')
+    
+    # Batch prediction
+    parser.add_argument('--key-column', type=str, default='input_key',
+                        help='Key column for batch prediction')
+    parser.add_argument('--output', type=str,
+                        help='Output file for batch prediction')
+    parser.add_argument('--features-file', type=str,
+                        help='File containing list of features')
+    parser.add_argument('--threshold', type=float,
+                        help='Classification threshold')
     
     return parser.parse_args()
 
-@timer
-def run_data_check(feature_files: List[str]):
-    """
-    Run data validation checks.
-    
-    Args:
-        feature_files: List of feature file paths
-    """
-    print("\n=== Running data validation checks ===")
-    
-    # Check for duplicate features across files
-    print("\nChecking for duplicate features across files...")
-    check_duplicate_features(feature_files)
-    
-    # Check for duplicate keys within each file
-    print("\nChecking for duplicate keys within each file...")
-    check_duplicate_keys(feature_files)
-    
-    print("\nData validation checks completed.")
-
-@timer
-def run_data_merge(feature_files: List[str], sample_file1: str, sample_file2: str):
-    """
-    Merge feature files and process with sample files.
-    
-    Args:
-        feature_files: List of feature file paths
-        sample_file1: First sample file path
-        sample_file2: Second sample file path
-        
-    Returns:
-        Merged DataFrame or None if error
-    """
-    print("\n=== Running data merge ===")
-    
-    # Merge feature files
-    print("\nMerging feature files...")
-    merged_df = merge_feature_files(feature_files)
-    
-    if merged_df is None:
-        print("Error: Failed to merge feature files.")
-        return None
-    
-    print(f"Merged features dataset shape: {merged_df.shape}")
-    
-    # Process sample files if provided
-    if sample_file1 and sample_file2:
-        print("\nProcessing sample files...")
-        result_df1, result_df2 = process_sample_files(merged_df, sample_file1, sample_file2)
-        
-        if result_df1 is not None:
-            result_df1.to_csv("merged_sample1.csv", index=False)
-            print(f"Saved merged sample1 dataset to merged_sample1.csv, shape: {result_df1.shape}")
-        
-        if result_df2 is not None:
-            result_df2.to_csv("merged_sample2.csv", index=False)
-            print(f"Saved merged sample2 dataset to merged_sample2.csv, shape: {result_df2.shape}")
-        
-        # Return the first processed DataFrame for further analysis
-        return result_df1
-    
-    # Save merged dataset
-    merged_df.to_csv("merged_features.csv", index=False)
-    print(f"Saved merged features dataset to merged_features.csv")
-    
-    return merged_df
-
-@timer
-def run_training(data_file: str, target: str = DEFAULT_TARGET, resume_from: str = None):
-    """
-    Run model training pipeline with checkpointing support.
-    
-    Args:
-        data_file: Data file path
-        target: Target variable
-        resume_from: Stage to resume from (None means auto-detect or start from beginning)
-        
-    Returns:
-        Training results or None if error
-    """
-    print(f"\n=== Running training pipeline for target: {target} ===")
-    
-    # Create output directories
-    dirs = ensure_dirs()
-    checkpoint_dir = os.path.join(dirs['model_dir'], 'checkpoints', target)
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    
-    # If resuming and train/test data is already saved, we can skip data loading
-    train_path = os.path.join(RESULTS_DIR, "train_data.csv")
-    test_path = os.path.join(RESULTS_DIR, "test_data.csv")
-    checkpoint_status_file = os.path.join(checkpoint_dir, 'pipeline_status.json')
-    
-    # Check if we're resuming from an existing checkpoint
-    if resume_from is None and os.path.exists(checkpoint_status_file):
-        try:
-            with open(checkpoint_status_file, 'r') as f:
-                checkpoint_status = json.load(f)
-                if checkpoint_status.get('current_stage') == 'completed':
-                    print("Training pipeline was already completed. To retrain, please specify a stage to resume from.")
-                    
-                    # Load final model path from checkpoint if available
-                    model_file = os.path.join(MODEL_DIR, f"{target}_final_model.pmml")
-                    feature_file = os.path.join(MODEL_DIR, f"{target}_selected_features.txt")
-                    
-                    if os.path.exists(model_file) and os.path.exists(feature_file):
-                        print(f"Model is available at: {model_file}")
-                        print(f"Selected features are available at: {feature_file}")
-                        
-                        # Return minimal results so main function knows it was successful
-                        return {
-                            'model_file': model_file,
-                            'feature_file': feature_file
-                        }
-                    else:
-                        print("Warning: Training completed but model files not found.")
-                        # Continue with training
-        except Exception as e:
-            print(f"Error reading checkpoint status: {e}")
-    
-    # Check if we need to load data from scratch or can use existing split
-    if resume_from is None or resume_from == 'start' or not (os.path.exists(train_path) and os.path.exists(test_path)):
-        # Load data
-        try:
-            print(f"Loading data from {data_file}...")
-            merged_df = pd.read_csv(data_file)
-            print(f"Loaded data shape: {merged_df.shape}")
-        except Exception as e:
-            print(f"Error loading data: {e}")
-            return None
-        
-        # Analyze label distribution
-        label_stats = analyze_label_distribution(merged_df, target=target)
-        
-        # Split data by time
-        print("\nSplitting data by time...")
-        train_df, test_df, split_date = split_by_time(merged_df, train_ratio=0.8)
-        
-        # Save split datasets for later reuse
-        os.makedirs(RESULTS_DIR, exist_ok=True)
-        train_df.to_csv(train_path, index=False)
-        test_df.to_csv(test_path, index=False)
-        
-        print(f"Training data saved to: {train_path}")
-        print(f"Testing data saved to: {test_path}")
-    else:
-        # Load existing split data
-        try:
-            print(f"Loading training data from {train_path}...")
-            train_df = pd.read_csv(train_path)
-            print(f"Loaded training data shape: {train_df.shape}")
-            
-            print(f"Loading testing data from {test_path}...")
-            test_df = pd.read_csv(test_path)
-            print(f"Loaded testing data shape: {test_df.shape}")
-        except Exception as e:
-            print(f"Error loading split data: {e}")
-            return None
-    
-    # Run two-stage modeling pipeline with checkpointing
-    print("\nRunning two-stage modeling pipeline...")
-    result = two_stage_modeling_pipeline(
-        train_df, 
-        test_df, 
-        target=target,
-        resume_from=resume_from,
-        checkpoint_dir=checkpoint_dir
-    )
-    
-    if result is None:
-        print("\nTraining pipeline failed. To resume from where it left off, run again without specifying resume_from.")
-        return None
-    
-    # Save training results
-    print("\nSaving training results...")
-    export_model_summary(result, os.path.join(RESULTS_DIR, f"{target}_training_summary.txt"))
-    
-    # Plot metrics comparison
-    if 'initial_metrics' in result and 'final_metrics' in result:
-        plot_metrics_comparison(
-            result['initial_metrics'], 
-            result['final_metrics'], 
-            title=f"{target.capitalize()} Model Improvement", 
-            output_file=os.path.join(RESULTS_DIR, f"{target}_metrics_comparison.png")
-        )
-    
-    print(f"\nTraining pipeline completed successfully.")
-    print(f"Model saved to: {result['model_file']}")
-    print(f"Selected features saved to: {result['feature_file']}")
-    
-    return result
-
-@timer
-def run_hyperparameter_tuning(target: str = DEFAULT_TARGET, max_evals: int = 50):
-    """
-    Run hyperparameter tuning.
-    
-    Args:
-        target: Target variable
-        max_evals: Maximum evaluations
-        
-    Returns:
-        Tuning results or None if error
-    """
-    print(f"\n=== Running hyperparameter tuning for target: {target} ===")
-    
-    # Create output directories
-    dirs = ensure_dirs()
-    
-    # Load training and test data
-    train_file = os.path.join(RESULTS_DIR, "train_data.csv")
-    test_file = os.path.join(RESULTS_DIR, "test_data.csv")
-    
-    if not os.path.exists(train_file) or not os.path.exists(test_file):
-        print(f"Error: Training or test data not found. Please run training pipeline first.")
-        return None
-    
-    # Load feature list from the two-stage modeling pipeline
-    feature_file = os.path.join(MODEL_DIR, f"{target}_selected_features.txt")
-    if not os.path.exists(feature_file):
-        print(f"Error: Selected feature list not found at {feature_file}. Please run training pipeline first.")
-        return None
-    
-    try:
-        # Load selected features
-        print(f"Loading selected features from {feature_file}...")
-        with open(feature_file, 'r') as f:
-            selected_features = [line.strip() for line in f.readlines()]
-        print(f"Loaded {len(selected_features)} selected features")
-        
-        # Load training and test data
-        print(f"Loading training data from {train_file}...")
-        train_df = pd.read_csv(train_file)
-        print(f"Loaded training data shape: {train_df.shape}")
-        
-        print(f"Loading test data from {test_file}...")
-        test_df = pd.read_csv(test_file)
-        print(f"Loaded test data shape: {test_df.shape}")
-        
-        # Filter data to only include selected features and required columns
-        required_cols = ['input_key', 'recall_date', target]
-        feature_cols = [col for col in selected_features if col in train_df.columns]
-        cols_to_keep = list(set(required_cols + feature_cols))
-        
-        train_df = train_df[cols_to_keep]
-        test_df = test_df[cols_to_keep]
-        print(f"Filtered training data shape: {train_df.shape}")
-        print(f"Filtered test data shape: {test_df.shape}")
-    except Exception as e:
-        print(f"Error loading data: {e}")
-        return None
-    
-    # Create hyperparameter optimizer
-    optimizer = HyperparameterOptimizer(
-        train_df=train_df,
-        test_df=test_df,
-        target=target,
-        max_evals=max_evals,
-        output_dir=dirs['tuning_dir']
-    )
-    
-    # Run optimization
-    print(f"\nStarting hyperparameter optimization with {max_evals} evaluations...")
-    result = optimizer.optimize()
-    
-    print(f"\nHyperparameter tuning completed.")
-    print(f"Tuned model saved to: {result['model_path']}")
-    
-    return result
-
-@timer
-def run_deployment(model_path: str, data_file: str, target: str = DEFAULT_TARGET, feature_list_file: str = None):
-    """
-    Run model deployment.
-    
-    Args:
-        model_path: Model file path
-        data_file: Data file path
-        target: Target variable
-        feature_list_file: Feature list file path
-        
-    Returns:
-        Deployment results or None if error
-    """
-    print(f"\n=== Running model deployment for target: {target} ===")
-    
-    # Create output directories
-    dirs = ensure_dirs()
-    
-    # Load data
-    try:
-        print(f"Loading data from {data_file}...")
-        test_df = pd.read_csv(data_file)
-        print(f"Loaded data shape: {test_df.shape}")
-    except Exception as e:
-        print(f"Error loading data: {e}")
-        return None
-    
-    # Run deployment
-    try:
-        result = deploy_model(
-            model_path=model_path,
-            test_df=test_df,
-            target=target,
-            feature_list_file=feature_list_file,
-            output_dir=dirs['deployment_dir']
-        )
-        
-        print(f"\nModel deployment completed successfully.")
-        print(f"Predictions saved to: {result['predictions_file']}")
-        
-        return result
-    except Exception as e:
-        print(f"Error during deployment: {e}")
-        import traceback
-        traceback.print_exc()
-        return None
 
 def main():
-    """Main function."""
-    start_time = time.time()
+    """Main entry point."""
+    args = parse_arguments()
     
-    # Parse command line arguments
-    args = parse_args()
-    
-    try:
-        # Run appropriate pipeline based on mode
-        if args.mode == 'check':
-            if not args.features:
-                print("Error: Feature files must be provided in check mode.")
-                sys.exit(1)
-            
-            run_data_check(args.features)
-        
-        elif args.mode == 'merge':
-            if not args.features:
-                print("Error: Feature files must be provided in merge mode.")
-                sys.exit(1)
-            
-            run_data_merge(args.features, args.sample1, args.sample2)
-        
-        elif args.mode == 'train':
-            if not args.data:
-                print("Error: Data file must be provided in train mode.")
-                sys.exit(1)
-            
-            run_training(args.data, args.target, args.resume_from)
-        
-        elif args.mode == 'tune':
-            run_hyperparameter_tuning(args.target, args.max_evals)
-        
-        elif args.mode == 'deploy':
-            if not args.model:
-                print("Error: Model file must be provided in deploy mode.")
-                sys.exit(1)
-            
-            if not args.data:
-                print("Error: Data file must be provided in deploy mode.")
-                sys.exit(1)
-            
-            run_deployment(args.model, args.data, args.target, args.features_file)
-        
-        else:
-            print(f"Error: Unknown mode '{args.mode}'.")
+    # Mode: check feature files for duplicates
+    if args.mode == 'check':
+        if not args.features:
+            print("Error: --features argument is required for check mode")
             sys.exit(1)
         
-        # Report total time
-        total_time = time.time() - start_time
-        print(f"\nTotal execution time: {total_time:.2f} seconds ({total_time/60:.2f} minutes)")
+        print(f"Checking {len(args.features)} feature files for duplicates...")
+        results = check_feature_files(args.features)
         
-    except Exception as e:
-        print(f"Error in main execution: {e}")
-        import traceback
-        traceback.print_exc()
+        if results['status'] == 'success':
+            print("No issues found")
+        else:
+            print(f"Found {len(results['issues'])} issues:")
+            for issue in results['issues']:
+                print(f"  - {issue}")
+    
+    # Mode: merge feature files
+    elif args.mode == 'merge':
+        if not args.features:
+            print("Error: --features argument is required for merge mode")
+            sys.exit(1)
+        
+        print(f"Merging {len(args.features)} feature files...")
+        merged_df = merge_feature_files(
+            args.features,
+            args.sample1,
+            args.sample2
+        )
+        
+        # Save merged dataset
+        output_file = 'merged_features.csv'
+        merged_df.to_csv(output_file, index=False)
+        print(f"Saved merged dataset to {output_file} with {len(merged_df)} rows and {len(merged_df.columns)} columns")
+    
+    # Mode: train model
+    elif args.mode == 'train':
+        if not args.data:
+            print("Error: --data argument is required for train mode")
+            sys.exit(1)
+        
+        print(f"Loading data from {args.data}...")
+        
+        # Load data
+        if args.data.endswith('.csv'):
+            df = pd.read_csv(args.data)
+        elif args.data.endswith('.parquet'):
+            df = pd.read_parquet(args.data)
+        else:
+            print(f"Error: Unsupported file format: {args.data}")
+            sys.exit(1)
+        
+        print(f"Data loaded, shape: {df.shape}")
+        
+        # Preprocess and split data
+        print("Preprocessing data...")
+        train_df, test_df = preprocess_data(
+            df, 
+            target=args.target
+        )
+        
+        # Run two-stage modeling pipeline
+        results = two_stage_modeling_pipeline(
+            train_df, 
+            test_df, 
+            target=args.target,
+            resume_from=args.resume_from
+        )
+        
+        print("Training completed")
+    
+    # Mode: hyperparameter tuning
+    elif args.mode == 'tune':
+        if not args.target:
+            print("Error: --target argument is required for tune mode")
+            sys.exit(1)
+        
+        # Check if we need to load data or we already have models
+        features_file = "funnel_models/selected_features.txt"
+        
+        if not os.path.exists(features_file):
+            print("Error: Feature list not found. Please run train mode first.")
+            sys.exit(1)
+        
+        if args.data:
+            print(f"Loading data from {args.data}...")
+            
+            # Load data
+            if args.data.endswith('.csv'):
+                df = pd.read_csv(args.data)
+            elif args.data.endswith('.parquet'):
+                df = pd.read_parquet(args.data)
+            else:
+                print(f"Error: Unsupported file format: {args.data}")
+                sys.exit(1)
+            
+            print(f"Data loaded, shape: {df.shape}")
+            
+            # Preprocess and split data
+            print("Preprocessing data...")
+            train_df, test_df = preprocess_data(
+                df, 
+                target=args.target
+            )
+        else:
+            print("Loading data from funnel_models directory...")
+            
+            # Try to load from saved files
+            train_file = "funnel_models/train.csv"
+            test_file = "funnel_models/test.csv"
+            
+            if not os.path.exists(train_file) or not os.path.exists(test_file):
+                print("Error: Training data not found. Please use --data argument.")
+                sys.exit(1)
+            
+            train_df = pd.read_csv(train_file)
+            test_df = pd.read_csv(test_file)
+            
+            print(f"Data loaded, train shape: {train_df.shape}, test shape: {test_df.shape}")
+        
+        # Load feature list
+        features = load_feature_list(features_file)
+        print(f"Loaded {len(features)} features from {features_file}")
+        
+        # Run hyperparameter optimization
+        results = hyperopt_xgb(
+            train_df,
+            test_df,
+            features,
+            target=args.target,
+            max_evals=args.max_evals
+        )
+        
+        # Create visualization plots
+        results_file = f"optimization_results/{args.target}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}_results.json"
+        plot_optimization_results(results_file)
+        
+        print("Hyperparameter tuning completed")
+    
+    # Mode: deploy model
+    elif args.mode == 'deploy':
+        if not args.model:
+            print("Error: --model argument is required for deploy mode")
+            sys.exit(1)
+        
+        if not args.data:
+            print("Error: --data argument is required for deploy mode")
+            sys.exit(1)
+        
+        print(f"Loading data from {args.data}...")
+        
+        # Load data
+        if args.data.endswith('.csv'):
+            df = pd.read_csv(args.data)
+        elif args.data.endswith('.parquet'):
+            df = pd.read_parquet(args.data)
+        else:
+            print(f"Error: Unsupported file format: {args.data}")
+            sys.exit(1)
+        
+        print(f"Data loaded, shape: {df.shape}")
+        
+        # Deploy model
+        if args.target and args.target in df.columns:
+            print(f"Deploying model with evaluation against {args.target}...")
+            
+            results = deploy_model(
+                args.model,
+                df,
+                target=args.target,
+                features_file=args.features_file,
+                threshold=args.threshold
+            )
+        else:
+            print("Deploying model for batch prediction...")
+            
+            if not args.features_file:
+                print("Error: --features-file is required for batch prediction")
+                sys.exit(1)
+            
+            if not args.output:
+                args.output = 'predictions.csv'
+            
+            results = batch_prediction(
+                args.model,
+                df,
+                key_column=args.key_column,
+                features_file=args.features_file,
+                output_file=args.output,
+                threshold=args.threshold or 0.5
+            )
+        
+        print("Deployment completed")
+    
+    else:
+        print(f"Error: Unsupported mode: {args.mode}")
         sys.exit(1)
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     main() 
