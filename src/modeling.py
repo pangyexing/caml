@@ -14,6 +14,9 @@ import json
 import pickle
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Union, Any
+import gc
+import psutil
+import traceback
 
 from xgboost import XGBClassifier
 from sklearn.metrics import (
@@ -405,7 +408,6 @@ def analyze_feature_interactions(
     shap_interactions = get_shap_interactions(
         pos_samples, 
         initial_model, 
-        top_feature_names, 
         skip_shap_interactions, 
         max_interactions
     )
@@ -431,91 +433,122 @@ def analyze_feature_interactions(
 def get_shap_interactions(
     pos_samples: pd.DataFrame, 
     model: XGBClassifier, 
-    top_feature_names: List[str], 
     skip_shap: bool, 
-    max_interactions: int
+    max_interactions: int,
+    batch_size: int = 200
 ) -> List[Tuple[str, str]]:
-    """Get feature interactions using SHAP values"""
+    """
+    Calculate SHAP interaction values for positive samples using batch processing.
     
+    Args:
+        pos_samples: DataFrame containing only positive samples.
+        model: Trained XGBoost model.
+        skip_shap: If True, skip SHAP calculation and return empty list.
+        max_interactions: Maximum number of interaction pairs to return.
+        batch_size: Number of samples to process in each SHAP batch.
+        
+    Returns:
+        List of feature pairs (tuples) sorted by mean absolute SHAP interaction value.
+    """
     if skip_shap:
-        print("已配置跳过SHAP交互值计算，仅使用替代方法分析特征交互")
+        print("Skipping SHAP interaction calculation.")
         return []
-        
+
+    print("\nCalculating SHAP interaction values for positive samples...")
+    
+    # Use features the model was trained on
     try:
-        interaction_sample_size = min(1000, len(pos_samples))
-        interaction_sample = pos_samples.sample(interaction_sample_size, random_state=42)
-        
-        # Limit features to reduce computation complexity
-        max_features_for_interaction = min(25, len(top_feature_names))
-        top_features_subset = top_feature_names[:max_features_for_interaction]
-        print(f"为降低计算复杂度，仅使用前 {max_features_for_interaction} 个特征和 {interaction_sample_size} 个样本分析交互")
-        
-        # Ensure we only use valid feature columns, filtering out any excluded columns
-        feature_cols = [col for col in interaction_sample.columns if col not in EXCLUDE_COLS]
-        
-        # Filter to only include top feature subset that exists in our dataset
-        valid_top_features = [feat for feat in top_features_subset if feat in feature_cols]
-        X_interaction = interaction_sample[valid_top_features].copy()
-        
-        print(f"特征交互分析使用的特征数量: {len(valid_top_features)}")
-        
-        # Memory estimation check
-        estimated_memory = len(X_interaction) * len(valid_top_features) * len(valid_top_features) * 8 / (1024 * 1024)
-        print(f"估计内存需求: 约 {estimated_memory:.2f} MB")
-        
-        # Calculate SHAP interaction values in batches to reduce memory usage
+        model_features = model.get_booster().feature_names
+        if model_features is None: # Fallback for older xgboost/sklearn versions
+             model_features = model.feature_names_in_
+        X_pos = pos_samples[model_features]
+        n_features = len(model_features)
+    except AttributeError:
+         print("Error: Could not retrieve feature names from the model. Ensure the model is trained.")
+         return []
+    except KeyError as e:
+        print(f"Error: Feature {e} not found in pos_samples DataFrame.")
+        return []
+
+    n_samples = len(X_pos)
+    if n_samples == 0:
+        print("No positive samples provided for SHAP interaction analysis.")
+        return []
+
+    print(f"Analyzing {n_samples} positive samples with {n_features} features.")
+
+    # Initialize accumulator for interaction values
+    interaction_sum = np.zeros((n_features, n_features))
+    total_processed = 0
+
+    try:
         explainer = shap.TreeExplainer(model)
         
-        # Define batch size based on available memory
-        batch_size = 50  # Start with a small batch size
-        n_batches = (len(X_interaction) + batch_size - 1) // batch_size
-        print(f"将样本分为 {n_batches} 批进行处理，每批 {batch_size} 个样本")
-        
-        # Initialize tensor to accumulate interaction sums
-        # Shape: [n_features, n_features]
-        interaction_sum = np.zeros((len(valid_top_features), len(valid_top_features)))
-        
-        # Process in batches
-        for i in range(n_batches):
-            start_idx = i * batch_size
-            end_idx = min((i + 1) * batch_size, len(X_interaction))
-            print(f"处理批次 {i+1}/{n_batches}，样本 {start_idx} 到 {end_idx-1}")
+        for i in range(0, n_samples, batch_size):
+            batch_end = min(i + batch_size, n_samples)
+            X_batch = X_pos.iloc[i:batch_end]
             
-            # Get batch data
-            X_batch = X_interaction.iloc[start_idx:end_idx]
-            
-            # Calculate SHAP interaction values for this batch
-            batch_interaction_values = explainer.shap_interaction_values(X_batch)
-            
-            # Add absolute sums to our accumulator
-            for j in range(batch_interaction_values.shape[0]):  # For each sample in batch
-                interaction_sum += np.abs(batch_interaction_values[j])
-            
-            # Force garbage collection to free memory
-            import gc
-            gc.collect()
+            # Memory check before calculating SHAP values
+            mem = psutil.virtual_memory()
+            print(f"Processing batch {i//batch_size + 1}/{(n_samples + batch_size - 1)//batch_size}... Memory: {mem.percent}% used, {mem.available/1024/1024/1024:.2f}GB available")
+            if mem.available < 1 * 1024 * 1024 * 1024: # Less than 1GB available
+                 print("Warning: Low memory detected before SHAP calculation.")
+
+            try:
+                shap_interaction_values_batch = explainer.shap_interaction_values(X_batch)
+                
+                # Ensure the output shape is correct (samples, features, features)
+                if shap_interaction_values_batch.ndim == 3 and shap_interaction_values_batch.shape[1:] == (n_features, n_features):
+                     # Sum absolute values for the batch
+                     interaction_sum += np.sum(np.abs(shap_interaction_values_batch), axis=0)
+                     total_processed += len(X_batch)
+                else:
+                     print(f"Warning: Unexpected SHAP interaction values shape for batch: {shap_interaction_values_batch.shape}")
+                
+                # Clean up memory
+                del shap_interaction_values_batch
+                gc.collect()
+                
+            except MemoryError:
+                print(f"MemoryError during SHAP interaction calculation for batch starting at index {i}. Try reducing batch_size.")
+                # Optional: could implement further reduction or stop here
+                return [] # Stop processing if memory error occurs
+            except Exception as e:
+                print(f"Error calculating SHAP interactions for batch {i}: {e}")
+                continue # Skip batch on other errors, or handle differently
+
+        if total_processed == 0:
+            print("No samples were successfully processed for SHAP interactions.")
+            return []
+
+        # Calculate mean absolute interaction values
+        mean_abs_interaction = interaction_sum / total_processed
+
+        # Extract and rank interaction pairs
+        interaction_list = []
+        for r in range(n_features):
+            for c in range(r + 1, n_features): # Consider only upper triangle (i != j)
+                interaction_strength = mean_abs_interaction[r, c]
+                if interaction_strength > 1e-9: # Avoid negligible values
+                     interaction_list.append(
+                         (model_features[r], model_features[c], interaction_strength)
+                    )
+
+        # Sort by interaction strength (descending)
+        interaction_list.sort(key=lambda x: x[2], reverse=True)
+
+        # Select top interactions
+        top_interactions = [(f1, f2) for f1, f2, _ in interaction_list[:max_interactions]]
         
-        # Extract and sort interactions
-        interaction_scores = []
-        for i in range(len(valid_top_features)):
-            feat_i = valid_top_features[i]
-            for j in range(len(valid_top_features)):
-                feat_j = valid_top_features[j]
-                if i < j:  # Only include each pair once
-                    interaction_scores.append((feat_i, feat_j, interaction_sum[i, j]))
-        
-        interaction_scores.sort(key=lambda x: x[2], reverse=True)
-        shap_interactions = [(f1, f2) for f1, f2, _ in interaction_scores[:max_interactions]]
-        
-        # Print top interactions
-        print("\n基于SHAP交互值的重要特征对:")
-        for i, (f1, f2, score) in enumerate(interaction_scores[:10]):
-            print(f"  {i+1}. {f1} × {f2}: {score:.6f}")
-            
-        return shap_interactions
-        
+        print(f"\nTop {len(top_interactions)} SHAP interactions found:")
+        for k, (f1, f2, val) in enumerate(interaction_list[:min(max_interactions, 10)]): # Print top 10 or fewer
+             print(f"  {k+1}. {f1} <-> {f2}: {val:.6f}")
+
+        return top_interactions
+
     except Exception as e:
-        print(f"SHAP交互值分析出错: {e}")
+        print(f"An unexpected error occurred during SHAP interaction analysis: {e}")
+        traceback.print_exc()
         return []
 
 def get_model_interactions(
