@@ -242,23 +242,56 @@ def analyze_positive_sample_subgroups(
             
         print(f"\n分析子群体 {cluster_id+1} ({len(cluster_samples)} 个样本)...")
         
-        # Get SHAP values for this cluster
-        X_cluster = cluster_samples[initial_features]
-        shap_values = explainer.shap_values(X_cluster)
+        try:
+            # Get SHAP values for this cluster
+            X_cluster = cluster_samples[initial_features]
+            
+            # 更全面的数据预处理
+            X_cluster_processed = X_cluster.copy()
+            
+            # 1. 确保数据类型正确
+            for col in X_cluster_processed.columns:
+                if X_cluster_processed[col].dtype not in ['float64', 'int64']:
+                    X_cluster_processed[col] = pd.to_numeric(X_cluster_processed[col], errors='coerce')
+            
+            # 2. 填充NaN值
+            X_cluster_processed = X_cluster_processed.fillna(0)
+            
+            # 3. 处理无穷大值
+            X_cluster_processed = X_cluster_processed.replace([np.inf, -np.inf], 0)
+            
+            # 4. 确保没有其他问题数据
+            for col in X_cluster_processed.columns:
+                if not np.isfinite(X_cluster_processed[col]).all():
+                    X_cluster_processed[col] = X_cluster_processed[col].fillna(0)
+            
+            # 使用处理后的数据计算SHAP值
+            # 设置较小的样本量以增加计算成功率
+            sample_size = min(100, len(X_cluster_processed))
+            if len(X_cluster_processed) > sample_size:
+                X_sample = X_cluster_processed.sample(sample_size, random_state=42)
+            else:
+                X_sample = X_cluster_processed
+                
+            # 计算SHAP值
+            shap_values = explainer.shap_values(X_sample)
+            
+            # Average absolute SHAP values
+            mean_shap = np.abs(shap_values).mean(axis=0)
+            
+            # Map feature importance
+            feature_importance = dict(zip(X_sample.columns, mean_shap))
+            
+            # Get most important features
+            top_features = sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)[:10]
+            print(f"子群体 {cluster_id+1} 最重要特征:")
+            for feature, importance in top_features:
+                print(f"  - {feature}: {importance:.6f}")
+                important_features.append(feature)
         
-        # Average absolute SHAP values
-        mean_shap = np.abs(shap_values).mean(axis=0)
-        shap_dict = dict(zip(initial_features, mean_shap))
-        
-        # Get top features for this cluster
-        top_features = sorted(shap_dict.items(), key=lambda x: x[1], reverse=True)[:15]
-        
-        print(f"子群体 {cluster_id+1} 重要特征:")
-        for f, v in top_features[:5]:
-            print(f"  {f}: {v:.6f}")
-        
-        # Add to important features list
-        important_features.extend([f for f, _ in top_features])
+        except Exception as e:
+            print(f"子群体 {cluster_id+1} 特征分析失败: {str(e)}")
+            # 仍继续分析其他子群体
     
     # Remove duplicates while preserving order
     unique_important_features = []

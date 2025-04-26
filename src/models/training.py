@@ -615,16 +615,27 @@ def two_stage_modeling_pipeline(
     # Save pipeline results
     output_path = os.path.join(MODEL_DIR, "pipeline_results.json")
     
-    # Convert non-serializable objects to strings
-    serializable_results = {}
-    for k, v in pipeline_results.items():
-        if isinstance(v, (datetime, np.ndarray)):
-            serializable_results[k] = str(v)
-        elif isinstance(v, dict):
-            serializable_results[k] = {k2: str(v2) if isinstance(v2, (datetime, np.ndarray)) else v2 
-                                      for k2, v2 in v.items()}
+    # 增强型 JSON 序列化转换函数
+    def convert_to_serializable(obj):
+        if isinstance(obj, (datetime, np.ndarray)):
+            return str(obj)
+        elif isinstance(obj, (np.int64, np.int32, np.int16, np.int8)):
+            return int(obj)
+        elif isinstance(obj, (np.float64, np.float32, np.float16)):
+            return float(obj)
+        elif isinstance(obj, (np.bool_)):
+            return bool(obj)
+        elif isinstance(obj, dict):
+            return {k: convert_to_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_to_serializable(v) for v in obj]
+        elif isinstance(obj, tuple):
+            return tuple(convert_to_serializable(v) for v in obj)
         else:
-            serializable_results[k] = v
+            return obj
+    
+    # 将所有结果转换为可序列化对象
+    serializable_results = convert_to_serializable(pipeline_results)
     
     import json
     with open(output_path, 'w') as f:
