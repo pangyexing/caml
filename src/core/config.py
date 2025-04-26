@@ -19,10 +19,10 @@ for directory in [MODEL_DIR, TUNED_MODELS_DIR, OPTIMIZATION_DIR, DEPLOYMENT_DIR]
     os.makedirs(directory, exist_ok=True)
 
 # Column exclusions for feature selection
-EXCLUDE_COLS = [
-    'input_key', 'recall_date', 'label_register', 
-    'label_apply', 'label_approve', 'time_bin', 'score'
-]
+ID_COLS = ['input_key', 'recall_date']
+LABEL_COLS = ['label_register', 'label_apply', 'label_approve']
+OTHER_COLS = ['time_bin', 'score']
+EXCLUDE_COLS = ID_COLS + LABEL_COLS + OTHER_COLS
 
 # Feature selection parameters
 FEATURE_SELECTION_PARAMS = {

@@ -35,10 +35,8 @@ def parse_arguments():
                         help='Feature files to process')
     
     # Sample files arguments
-    parser.add_argument('--sample1', type=str,
-                        help='First sample file')
-    parser.add_argument('--sample2', type=str,
-                        help='Second sample file')
+    parser.add_argument('--sample', type=str,
+                        help='sample file')
     
     # Data file arguments
     parser.add_argument('--data', type=str,
@@ -104,8 +102,7 @@ def main():
         print(f"Merging {len(args.features)} feature files...")
         merged_df = merge_feature_files(
             args.features,
-            args.sample1,
-            args.sample2
+            args.sample
         )
         
         # Save merged dataset

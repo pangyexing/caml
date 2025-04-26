@@ -5,11 +5,11 @@
 Data preprocessing and cleaning functionality.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 
-from src.core.config import EXCLUDE_COLS
+from src.core.config import EXCLUDE_COLS, ID_COLS
 
 
 def preprocess_data(
@@ -46,11 +46,7 @@ def preprocess_data(
         if col not in EXCLUDE_COLS:
             if df[col].dtype in ['float64', 'int64']:
                 # For numeric columns, fill with median to minimize outlier impact
-                df[col] = df[col].fillna(df[col].median())
-            else:
-                # For categorical columns, fill with the most common value
-                most_common = df[col].mode()[0] if not df[col].mode().empty else 0
-                df[col] = df[col].fillna(most_common)
+                df[col] = df[col].fillna(0.0)
     
     # Drop any rows with missing target
     if target in df.columns:
@@ -88,8 +84,7 @@ def preprocess_data(
 
 def merge_feature_files(
     feature_files: List[str], 
-    sample_file1: Optional[str] = None,
-    sample_file2: Optional[str] = None, 
+    sample_file: str = None,
     key_column: str = 'input_key'
 ) -> pd.DataFrame:
     """
@@ -97,8 +92,7 @@ def merge_feature_files(
     
     Args:
         feature_files: List of feature file paths
-        sample_file1: First sample file path
-        sample_file2: Second sample file path
+        sample_file: Sample file path
         key_column: Key column name for merging
     
     Returns:
@@ -133,46 +127,52 @@ def merge_feature_files(
     merged_df = feature_dfs[0]
     for i, df in enumerate(feature_dfs[1:], 2):
         print(f"合并第 {i} 个特征文件，共 {len(feature_dfs)} 个")
-        merged_df = pd.merge(merged_df, df, on=key_column, how='outer')
+        # 使用ID_COLS中的所有列作为合并键，如果存在于两个DataFrame中
+        merge_on = [col for col in ID_COLS if col in merged_df.columns and col in df.columns]
+        if not merge_on:
+            # 如果没有共同的ID列，则使用默认的key_column
+            merge_on = key_column
+        
+        # 为重复列名添加后缀
+        merged_df = pd.merge(
+            merged_df, 
+            df, 
+            on=merge_on, 
+            how='outer',
+            suffixes=('', f'_{i}')  # 使用数字后缀来避免列名冲突
+        )
     
     # Merge with sample files if provided
-    if sample_file1:
-        print(f"合并样本文件 1: {sample_file1}")
+    if sample_file:
+        print(f"合并样本文件: {sample_file}")
         # Auto-detect file format
-        if sample_file1.endswith('.csv'):
-            sample_df1 = pd.read_csv(sample_file1)
-        elif sample_file1.endswith('.parquet'):
-            sample_df1 = pd.read_parquet(sample_file1)
-        elif sample_file1.endswith('.pkl') or sample_file1.endswith('.pickle'):
-            sample_df1 = pd.read_pickle(sample_file1)
+        if sample_file.endswith('.csv'):
+            sample_df = pd.read_csv(sample_file)
+        elif sample_file.endswith('.parquet'):
+            sample_df = pd.read_parquet(sample_file)
+        elif sample_file.endswith('.pkl') or sample_file.endswith('.pickle'):
+            sample_df = pd.read_pickle(sample_file)
         else:
-            raise ValueError(f"Unsupported file format: {sample_file1}")
+            raise ValueError(f"Unsupported file format: {sample_file}")
         
         # Check if key column exists
-        if key_column not in sample_df1.columns:
-            raise ValueError(f"Key column '{key_column}' not found in {sample_file1}")
+        if key_column not in sample_df.columns:
+            raise ValueError(f"Key column '{key_column}' not found in {sample_file}")
         
+        # 使用ID_COLS中的所有列作为合并键，如果存在于两个DataFrame中
+        merge_on = [col for col in ID_COLS if col in merged_df.columns and col in sample_df.columns]
+        if not merge_on:
+            # 如果没有共同的ID列，则使用默认的key_column
+            merge_on = key_column
+            
         # Merge with sample file
-        merged_df = pd.merge(merged_df, sample_df1, on=key_column, how='inner')
-    
-    if sample_file2:
-        print(f"合并样本文件 2: {sample_file2}")
-        # Auto-detect file format
-        if sample_file2.endswith('.csv'):
-            sample_df2 = pd.read_csv(sample_file2)
-        elif sample_file2.endswith('.parquet'):
-            sample_df2 = pd.read_parquet(sample_file2)
-        elif sample_file2.endswith('.pkl') or sample_file2.endswith('.pickle'):
-            sample_df2 = pd.read_pickle(sample_file2)
-        else:
-            raise ValueError(f"Unsupported file format: {sample_file2}")
-        
-        # Check if key column exists
-        if key_column not in sample_df2.columns:
-            raise ValueError(f"Key column '{key_column}' not found in {sample_file2}")
-        
-        # Merge with sample file
-        merged_df = pd.merge(merged_df, sample_df2, on=key_column, how='inner')
+        merged_df = pd.merge(
+            merged_df, 
+            sample_df, 
+            on=merge_on, 
+            how='inner',
+            suffixes=('', '_sample')
+        )
     
     # Report on the merged dataset
     print(f"合并结果: {len(merged_df)} 行, {len(merged_df.columns)} 列")
@@ -180,13 +180,13 @@ def merge_feature_files(
     return merged_df
 
 
-def check_feature_files(feature_files: List[str], key_column: str = 'input_key') -> Dict[str, Any]:
+def check_feature_files(feature_files: List[str], key_columns: list = ID_COLS) -> Dict[str, Any]:
     """
     Check feature files for duplicate features and keys.
     
     Args:
         feature_files: List of feature file paths
-        key_column: Key column name
+        key_columns: List of key column names that together form the primary key
     
     Returns:
         Dictionary with check results
@@ -210,21 +210,28 @@ def check_feature_files(feature_files: List[str], key_column: str = 'input_key')
             results['issues'].append(issue)
             continue
         
-        # Check for key column
-        if key_column not in df.columns:
-            issue = f"键列 '{key_column}' 在文件 {file} 中不存在"
+        # 确定要检查的主键列
+        id_cols_present = [col for col in key_columns if col in df.columns]
+        
+        if not id_cols_present:
+            # 如果没有任何配置的主键列存在，报告错误
+            missing_cols = ', '.join(key_columns)
+            issue = f"文件 {file} 中不存在任何配置的主键列: {missing_cols}"
             results['issues'].append(issue)
             continue
         
-        # Check for duplicate keys
-        dup_keys = df[key_column].duplicated().sum()
-        if dup_keys > 0:
-            issue = f"文件 {file} 中存在 {dup_keys} 个重复键"
-            results['issues'].append(issue)
+        # 检查组合主键是否有重复
+        if len(id_cols_present) > 0:
+            # 检查所有主键列组合是否有重复
+            dup_keys = df.duplicated(subset=id_cols_present).sum()
+            if dup_keys > 0:
+                key_desc = '、'.join(id_cols_present) if len(id_cols_present) > 1 else id_cols_present[0]
+                issue = f"文件 {file} 中组合主键 '{key_desc}' 存在 {dup_keys} 个重复记录"
+                results['issues'].append(issue)
         
         # Check feature names
         for col in df.columns:
-            if col != key_column:
+            if col not in id_cols_present:  # 排除所有主键列
                 if col in feature_maps:
                     issue = f"特征名称 '{col}' 在多个文件中重复: {file} 和 {feature_maps[col]}"
                     results['issues'].append(issue)

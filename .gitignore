@@ -59,3 +59,15 @@ nosetests.xml
 coverage.xml
 *.cover 
 *.mdc
+*.csv
+*.pkl
+checkpoints/*
+data/*
+*.png
+deployment_results/*
+funnel_moddels/*
+optimization_results/*
+*.joblib
+*.pmml
+*.txt
+*results.json
