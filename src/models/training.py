@@ -541,8 +541,18 @@ def two_stage_modeling_pipeline(
                 target=target
             )
             
-            # Define must-include features
-            must_include = subgroup_features[:50]
+            # 从特征重要性中获取顶级特征
+            top_model_feature_names = [f for f, _ in sorted(feature_importance.items(), 
+                                                           key=lambda x: x[1], 
+                                                           reverse=True)]
+            
+            # Create priority list - features that appear in both lists get priority
+            shared_features = list(set(subgroup_features[:50]) & set(top_model_feature_names[:50]))
+            # Add unique high-value features from each source
+            remaining_features = list(set(subgroup_features[:30] + top_model_feature_names[:30]) - set(shared_features))
+            # Combine features
+            must_include = shared_features + remaining_features
+            must_include = must_include[:50]  # Limit total
             
             # Run feature selection
             selected_features, feature_scores = trim_features_by_importance(
@@ -553,7 +563,7 @@ def two_stage_modeling_pipeline(
                 feature_stats=feature_stats,
                 train_df=train_df,
                 must_include=must_include,
-                return_scores=True  # 返回特征评分详情用于可视化
+                return_scores=True  # Return feature score details for visualization
             )
             
             # Visualize feature selection results
