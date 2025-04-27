@@ -246,32 +246,12 @@ def analyze_positive_sample_subgroups(
             # Get SHAP values for this cluster
             X_cluster = cluster_samples[initial_features]
             
-            # 更全面的数据预处理
-            X_cluster_processed = X_cluster.copy()
-            
-            # 1. 确保数据类型正确
-            for col in X_cluster_processed.columns:
-                if X_cluster_processed[col].dtype not in ['float64', 'int64']:
-                    X_cluster_processed[col] = pd.to_numeric(X_cluster_processed[col], errors='coerce')
-            
-            # 2. 填充NaN值
-            X_cluster_processed = X_cluster_processed.fillna(0)
-            
-            # 3. 处理无穷大值
-            X_cluster_processed = X_cluster_processed.replace([np.inf, -np.inf], 0)
-            
-            # 4. 确保没有其他问题数据
-            for col in X_cluster_processed.columns:
-                if not np.isfinite(X_cluster_processed[col]).all():
-                    X_cluster_processed[col] = X_cluster_processed[col].fillna(0)
-            
             # 使用处理后的数据计算SHAP值
-            # 设置较小的样本量以增加计算成功率
-            sample_size = min(100, len(X_cluster_processed))
-            if len(X_cluster_processed) > sample_size:
-                X_sample = X_cluster_processed.sample(sample_size, random_state=42)
+            sample_size = min(100, len(X_cluster))
+            if len(X_cluster) > sample_size:
+                X_sample = X_cluster.sample(sample_size, random_state=42)
             else:
-                X_sample = X_cluster_processed
+                X_sample = X_cluster
                 
             # 计算SHAP值
             shap_values = explainer.shap_values(X_sample)
