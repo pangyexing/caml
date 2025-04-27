@@ -24,6 +24,7 @@ from src.features.analysis import (
     analyze_feature_interactions,
     analyze_positive_sample_subgroups,
 )
+from src.utils import configure_fonts_for_plots
 from src.visualization.plots import (
     plot_feature_importance,
     plot_precision_recall_curve,
@@ -31,6 +32,8 @@ from src.visualization.plots import (
     plot_shap_summary,
 )
 
+# Call the font configuration function at module load time
+configure_fonts_for_plots()
 
 def train_initial_model(
     train_df: pd.DataFrame,
@@ -74,19 +77,18 @@ def train_initial_model(
     # Use default parameters for initial model
     params = DEFAULT_XGB_PARAMS.copy()
     params['scale_pos_weight'] = pos_weight
+    params['eval_metric'] = 'aucpr'  # Move eval_metric to the parameters
+    params['early_stopping_rounds'] = 20  # Move early_stopping_rounds to the parameters
     
     # Create model and pipeline
-    xgb_clf = XGBClassifier(**params)
+    xgb_clf = XGBClassifier(**params, verbosity=1)
     pipeline = PMMLPipeline([("classifier", xgb_clf)])
 
     # Train with early stopping
     print(f"开始训练初始模型 (特征数量: {len(features)})")
     eval_set = [(X_test, y_test)]
     pipeline.fit(X_train, y_train,
-                classifier__eval_set=eval_set,
-                classifier__eval_metric='aucpr',
-                classifier__early_stopping_rounds=20,
-                classifier__verbose=10)
+                classifier__eval_set=eval_set)
 
     # Extract model from pipeline
     model = pipeline.named_steps['classifier']
@@ -201,22 +203,21 @@ def train_final_model(
     # Use default parameters with custom overrides
     params = DEFAULT_XGB_PARAMS.copy()
     params['scale_pos_weight'] = pos_weight
+    params['eval_metric'] = 'aucpr'  # Move eval_metric to the parameters
+    params['early_stopping_rounds'] = 20  # Move early_stopping_rounds to the parameters
     
     if custom_params:
         params.update(custom_params)
     
     # Create model and pipeline
-    xgb_clf = XGBClassifier(**params)
+    xgb_clf = XGBClassifier(**params, verbosity=1)
     pipeline = PMMLPipeline([("classifier", xgb_clf)])
 
     # Train with early stopping
     print(f"开始训练最终模型 (特征数量: {len(features)})")
     eval_set = [(X_test, y_test)]
     pipeline.fit(X_train, y_train,
-                classifier__eval_set=eval_set,
-                classifier__eval_metric='aucpr',
-                classifier__early_stopping_rounds=20,
-                classifier__verbose=10)
+                classifier__eval_set=eval_set)
 
     # Extract model from pipeline
     model = pipeline.named_steps['classifier']
@@ -369,7 +370,7 @@ def perform_shap_analysis(
             )
             plt.title(f'SHAP Dependence Plot for {feature}')
             plt.tight_layout()
-            plt.savefig(os.path.join(MODEL_DIR, f"{model_name}_shap_dependence_{feature}.png"))
+            plt.savefig(os.path.join(MODEL_DIR, f"{model_name}_shap_dependence_{feature}.png"), dpi=300)
             plt.close()
     except Exception as e:
         print(f"Dependence plots failed: {str(e)}")
@@ -467,7 +468,7 @@ def two_stage_modeling_pipeline(
             feature_importance = dict(zip(importance_df['feature'], importance_df['importance']))
             
             # Get initial features
-            initial_features = list(feature_importance.keys())
+            initial_features = [col for col in train_df.columns if col not in EXCLUDE_COLS ]
             
             # Analyze positive sample subgroups
             subgroup_features = analyze_positive_sample_subgroups(

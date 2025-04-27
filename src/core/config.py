@@ -54,7 +54,6 @@ DEFAULT_XGB_PARAMS = {
     'gamma': 0.1,                 
     'reg_alpha': 0.01,             
     'reg_lambda': 1.0,             
-    'use_label_encoder': False,
     'seed': 42
 }
 

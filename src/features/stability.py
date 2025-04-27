@@ -16,7 +16,10 @@ import pandas as pd
 from tqdm import tqdm
 
 from src.core.config import MODEL_DIR
+from src.utils import configure_fonts_for_plots
 
+# Call the font configuration function at module load time
+configure_fonts_for_plots()
 
 def analyze_feature_stability(
     df: pd.DataFrame, 
@@ -123,7 +126,7 @@ def analyze_feature_stability(
     plt.title('特征稳定性分析 (PSI)')
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(MODEL_DIR, 'feature_stability_psi.png'))
+    plt.savefig(os.path.join(MODEL_DIR, 'feature_stability_psi.png'), dpi=300)
     
     print(f"\n特征稳定性分析结果 (耗时: {time.time() - start_time:.2f}秒):")
     for feature in feature_cols:
@@ -189,7 +192,7 @@ def plot_feature_drift(
         plt.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig(os.path.join(MODEL_DIR, f'feature_drift_{feature}.png'))
+    plt.savefig(os.path.join(MODEL_DIR, f'feature_drift_{feature}.png'), dpi=300)
     plt.close()
 
 
@@ -252,5 +255,5 @@ def compare_feature_distributions(
         axes[j].set_visible(False)
     
     plt.tight_layout()
-    plt.savefig(os.path.join(MODEL_DIR, 'train_test_distributions.png'))
+    plt.savefig(os.path.join(MODEL_DIR, 'train_test_distributions.png'), dpi=300)
     plt.close() 

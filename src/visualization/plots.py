@@ -15,6 +15,10 @@ import seaborn as sns
 import shap
 
 from src.core.config import MODEL_DIR
+from src.utils import configure_fonts_for_plots
+
+# Call the font configuration function at module load time
+configure_fonts_for_plots()
 
 
 def set_plotting_style():
@@ -98,6 +102,9 @@ def plot_shap_summary(
         plot_type: Plot type ('dot' or 'bar')
         filepath: Output file path
     """
+    # Ensure font configuration is applied
+    configure_fonts_for_plots()
+    
     plt.figure(figsize=(14, 10))
     
     if plot_type == 'bar':
@@ -110,10 +117,13 @@ def plot_shap_summary(
     
     # Save if filepath provided
     if filepath:
-        plt.savefig(filepath)
+        # Make sure directory exists
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        plt.savefig(filepath, dpi=300)
     else:
         output_path = os.path.join(MODEL_DIR, f'shap_summary_{plot_type}.png')
-        plt.savefig(output_path)
+        os.makedirs(MODEL_DIR, exist_ok=True)
+        plt.savefig(output_path, dpi=300)
     
     plt.close()
 
