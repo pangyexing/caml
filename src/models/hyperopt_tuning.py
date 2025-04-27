@@ -5,16 +5,16 @@
 Hyperparameter optimization for XGBoost models.
 """
 
-import json
 import os
 import time
-from datetime import datetime
-from typing import Any, Dict, List, Optional
-
-import joblib
-import matplotlib.pyplot as plt
+import json
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+from datetime import datetime
+from typing import Dict, List, Tuple, Any, Optional
+
+import joblib
 from hyperopt import STATUS_OK, Trials, fmin, hp, tpe
 from hyperopt.pyll.base import scope
 from sklearn.model_selection import StratifiedKFold
@@ -28,18 +28,7 @@ from src.core.config import (
 )
 from src.evaluation.metrics import evaluate_predictions
 from src.models.training import train_final_model
-
-
-# Add a custom JSON encoder class to handle NumPy types
-class NumpyEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        elif isinstance(obj, np.floating):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        return super(NumpyEncoder, self).default(obj)
+from src.utils.common import serialize_to_json
 
 
 def create_hyperopt_space(param_space: Dict[str, List]) -> Dict[str, Any]:
@@ -382,8 +371,8 @@ def hyperopt_xgb(
         'param_space': param_space
     }
     
-    with open(results_path, 'w') as f:
-        json.dump(json_results, f, indent=2, cls=NumpyEncoder)
+    # Save results using our utility function
+    serialize_to_json(json_results, results_path)
     
     # Create and save parameter importance visualization
     plt.figure(figsize=(12, 8))

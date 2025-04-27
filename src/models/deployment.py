@@ -5,9 +5,9 @@
 Model deployment functionality.
 """
 
-import json
 import os
 import time
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -19,6 +19,7 @@ from pypmml import Model as PyPMMLModel
 from src.core.config import DEPLOYMENT_DIR
 from src.evaluation.metrics import calculate_lift, plot_lift_chart
 from src.visualization.plots import create_score_bins, plot_score_distribution
+from src.utils.common import serialize_to_json
 
 
 def load_model(model_path: str):
@@ -366,19 +367,7 @@ def deploy_model(
     
     results_path = os.path.join(output_dir, f"{deployment_name}_results.json")
     
-    # Convert to JSON-serializable format
-    json_results = {}
-    for k, v in deployment_results.items():
-        if isinstance(v, (np.ndarray, np.number)):
-            json_results[k] = v.tolist() if isinstance(v, np.ndarray) else float(v)
-        elif isinstance(v, dict):
-            json_results[k] = {k2: float(v2) if isinstance(v2, (np.number, float)) else v2 
-                              for k2, v2 in v.items()}
-        else:
-            json_results[k] = v
-    
-    with open(results_path, 'w') as f:
-        json.dump(json_results, f, indent=2)
+    serialize_to_json(deployment_results, results_path)
     
     print(f"\n部署完成，耗时 {time.time() - start_time:.2f} 秒")
     print(f"结果保存在: {output_dir}")

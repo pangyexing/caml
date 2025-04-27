@@ -9,9 +9,11 @@ import functools
 import os
 import time
 from typing import Any, Callable, Dict
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
+import json
 
 
 def timer(func: Callable) -> Callable:
@@ -189,6 +191,66 @@ def analyze_label_distribution(df: pd.DataFrame, target: str = 'label_apply') ->
         }
 
 
+def convert_to_serializable(obj: Any) -> Any:
+    """
+    Convert objects to JSON serializable format, handling NumPy arrays, pandas DataFrames, and other
+    non-serializable types.
+    
+    Args:
+        obj: Any Python object
+        
+    Returns:
+        JSON serializable version of the object
+    """
+    if isinstance(obj, (datetime, np.ndarray)):
+        return str(obj)
+    elif isinstance(obj, (np.int64, np.int32, np.int16, np.int8)):
+        return int(obj)
+    elif isinstance(obj, (np.float64, np.float32, np.float16)):
+        return float(obj)
+    elif isinstance(obj, (np.bool_)):
+        return bool(obj)
+    elif isinstance(obj, pd.DataFrame):
+        return obj.to_dict()
+    elif isinstance(obj, pd.Series):
+        return obj.to_dict()
+    elif isinstance(obj, dict):
+        return {k: convert_to_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_serializable(v) for v in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_to_serializable(v) for v in obj)
+    else:
+        return obj
+
+
+class NumpyEncoder(json.JSONEncoder):
+    """
+    JSON encoder that handles NumPy types.
+    """
+    def default(self, obj):
+        return convert_to_serializable(obj)
+
+
+def serialize_to_json(obj: Any, file_path: str, indent: int = 2) -> None:
+    """
+    Serialize an object to a JSON file, handling non-serializable types.
+    
+    Args:
+        obj: The object to serialize
+        file_path: Path to output file
+        indent: JSON indentation level
+    """
+    # Create output directory if it doesn't exist
+    output_dir = os.path.dirname(file_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+    
+    # Convert to serializable format and save
+    with open(file_path, 'w') as f:
+        json.dump(obj, f, indent=indent, cls=NumpyEncoder)
+
+
 def save_job_results(results: Dict[str, Any], filename: str) -> None:
     """
     Save job results to file.
@@ -197,32 +259,8 @@ def save_job_results(results: Dict[str, Any], filename: str) -> None:
         results: Dictionary of job results
         filename: Output filename
     """
-    import json
-    
-    # Create output directory if it doesn't exist
-    output_dir = os.path.dirname(filename)
-    if output_dir and not os.path.exists(output_dir):
-        os.makedirs(output_dir, exist_ok=True)
-    
-    # Convert non-serializable objects to strings
-    serializable_results = {}
-    for k, v in results.items():
-        if isinstance(v, (np.ndarray, pd.Series, pd.DataFrame)):
-            serializable_results[k] = v.tolist() if isinstance(v, np.ndarray) else v.to_dict()
-        elif isinstance(v, dict):
-            # Handle nested dictionaries
-            serializable_results[k] = {}
-            for k2, v2 in v.items():
-                if isinstance(v2, (np.ndarray, pd.Series, pd.DataFrame)):
-                    serializable_results[k][k2] = v2.tolist() if isinstance(v2, np.ndarray) else v2.to_dict()
-                else:
-                    serializable_results[k][k2] = v2
-        else:
-            serializable_results[k] = v
-    
-    # Save to file
-    with open(filename, 'w') as f:
-        json.dump(serializable_results, f, indent=2)
+    # Use the serialize_to_json utility function
+    serialize_to_json(results, filename)
 
 
 def load_job_results(filename: str) -> Dict[str, Any]:
