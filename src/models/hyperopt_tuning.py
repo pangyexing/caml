@@ -30,6 +30,18 @@ from src.evaluation.metrics import evaluate_predictions
 from src.models.training import train_final_model
 
 
+# Add a custom JSON encoder class to handle NumPy types
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NumpyEncoder, self).default(obj)
+
+
 def create_hyperopt_space(param_space: Dict[str, List]) -> Dict[str, Any]:
     """
     Create a hyperopt search space from parameter lists.
@@ -98,7 +110,6 @@ def objective_xgb(
     # Add fixed parameters
     fixed_params = {
         'objective': 'binary:logistic',
-        'use_label_encoder': False,
         'seed': random_state
     }
     
@@ -119,12 +130,10 @@ def objective_xgb(
         
         # Train model
         model = XGBClassifier(**params)
-        model.fit(
-            X_cv_train, y_cv_train,
-            eval_set=[(X_cv_test, y_cv_test)],
-            early_stopping_rounds=HYPEROPT_SETTINGS.get('early_stopping_rounds', 20),
-            verbose=0
-        )
+        model.fit(X_cv_train, y_cv_train)
+        
+        # Get best iteration if early stopping was used
+        best_iteration = getattr(model, 'best_iteration', None)
         
         # Predict and evaluate
         y_cv_pred = model.predict_proba(X_cv_test)[:, 1]
@@ -153,12 +162,10 @@ def objective_xgb(
     
     # Evaluate on validation set
     val_model = XGBClassifier(**params)
-    val_model.fit(
-        X_train, y_train,
-        eval_set=[(X_val, y_val)],
-        early_stopping_rounds=HYPEROPT_SETTINGS.get('early_stopping_rounds', 20),
-        verbose=0
-    )
+    val_model.fit(X_train, y_train)
+    
+    # Get best iteration if early stopping was used
+    best_val_iteration = getattr(val_model, 'best_iteration', None)
     
     # Predict and evaluate on validation set
     y_val_pred = val_model.predict_proba(X_val)[:, 1]
@@ -275,8 +282,7 @@ def hyperopt_xgb(
         space=space,
         algo=tpe.suggest,
         max_evals=max_evals,
-        trials=trials,
-        rstate=np.random.RandomState(random_state)
+        trials=trials
     )
     
     # Convert best parameters for integer parameters
@@ -312,7 +318,6 @@ def hyperopt_xgb(
     print("\n训练最佳参数模型...")
     best_params_full = {
         'objective': 'binary:logistic',
-        'use_label_encoder': False,
         'seed': random_state
     }
     best_params_full.update(best_params)
@@ -378,7 +383,7 @@ def hyperopt_xgb(
     }
     
     with open(results_path, 'w') as f:
-        json.dump(json_results, f, indent=2)
+        json.dump(json_results, f, indent=2, cls=NumpyEncoder)
     
     # Create and save parameter importance visualization
     plt.figure(figsize=(12, 8))
@@ -430,6 +435,11 @@ def plot_optimization_results(results_path: str) -> None:
     Args:
         results_path: Path to the optimization results JSON file
     """
+    # Check if file exists
+    if not os.path.exists(results_path):
+        print(f"Results file not found: {results_path}")
+        return
+        
     # Load results
     with open(results_path, 'r') as f:
         results = json.load(f)
@@ -544,7 +554,6 @@ def get_best_params_from_results(results_path: str) -> Dict[str, Any]:
     # Add required parameters
     best_params.update({
         'objective': 'binary:logistic',
-        'use_label_encoder': False,
         'seed': results.get('random_state', 42)
     })
     
