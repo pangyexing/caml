@@ -102,9 +102,6 @@ def plot_shap_summary(
         plot_type: Plot type ('dot' or 'bar')
         filepath: Output file path
     """
-    # Ensure font configuration is applied
-    configure_fonts_for_plots()
-    
     plt.figure(figsize=(14, 10))
     
     if plot_type == 'bar':

@@ -508,6 +508,7 @@ def two_stage_modeling_pipeline(
             from src.features.analysis import analyze_features_for_selection_parallel
             from src.features.selection import trim_features_by_importance
             from src.features.stability import analyze_feature_stability
+            from src.visualization.feature_selection_viz import visualize_feature_selection_results
             
             # Load previous results if needed
             importance_df = pd.read_csv(os.path.join(MODEL_DIR, "initial_model_importance.csv"))
@@ -541,24 +542,35 @@ def two_stage_modeling_pipeline(
             )
             
             # Define must-include features
-            must_include = subgroup_features[:50]  # Top 50 from subgroup analysis
+            must_include = subgroup_features[:50]
             
             # Run feature selection
-            selected_features = trim_features_by_importance(
+            selected_features, feature_scores = trim_features_by_importance(
                 initial_features,
                 feature_importance,
                 max_features=200,
                 psi_results=psi_results,
                 feature_stats=feature_stats,
                 train_df=train_df,
-                must_include=must_include
+                must_include=must_include,
+                return_scores=True  # 返回特征评分详情用于可视化
+            )
+            
+            # Visualize feature selection results
+            visualize_feature_selection_results(
+                feature_scores=feature_scores,
+                feature_stats=feature_stats,
+                selected_features=selected_features,
+                train_df=train_df,
+                output_dir=os.path.join(MODEL_DIR, 'feature_selection_viz')
             )
             
             # Save results
             pipeline_results['feature_selection'] = {
                 'selected_count': len(selected_features),
                 'initial_count': len(initial_features),
-                'must_include_count': len(must_include)
+                'must_include_count': len(must_include),
+                'visualization_path': os.path.join(MODEL_DIR, 'feature_selection_viz')
             }
             
             update_status('feature_selection')

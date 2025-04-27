@@ -6,7 +6,7 @@ Feature selection functionality.
 """
 
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 
@@ -425,7 +425,7 @@ class FeatureSelector:
         print(f"\n开始特征选择，候选特征数量: {len(feature_cols)}")
         
         # Calculate feature scores
-        feature_scores = self.calculate_feature_scores(
+        self.feature_scores = self.calculate_feature_scores(
             feature_cols, 
             importance_dict, 
             psi_results, 
@@ -434,7 +434,7 @@ class FeatureSelector:
         
         # Sort features by score
         sorted_features = sorted(
-            feature_scores.items(), 
+            self.feature_scores.items(), 
             key=lambda x: x[1]['score'], 
             reverse=True
         )
@@ -446,13 +446,13 @@ class FeatureSelector:
             top_features = [f[0] for f in sorted_features[:top_feature_limit]]
             
             # Detect correlated features
-            correlated_groups = self.detect_correlated_features(train_df, feature_scores, top_features)
+            correlated_groups = self.detect_correlated_features(train_df, self.feature_scores, top_features)
             
             # Handle correlated features by keeping the one with highest score
             for group_id, group in correlated_groups.items():
                 # Sort group by score
                 sorted_group = sorted(
-                    [(feat, corr, feature_scores.get(feat, {}).get('score', 0)) for feat, corr in group], 
+                    [(feat, corr, self.feature_scores.get(feat, {}).get('score', 0)) for feat, corr in group], 
                     key=lambda x: x[2], 
                     reverse=True
                 )
@@ -460,9 +460,9 @@ class FeatureSelector:
                 # Keep the first feature, mark others as duplicates
                 kept_feature = sorted_group[0][0]
                 for feat, corr, score in sorted_group[1:]:
-                    if feat in feature_scores:
-                        feature_scores[feat]['filter_reason'] = f"与特征 {kept_feature} 高相关 (r={corr:.4f})"
-                        feature_scores[feat]['score'] *= 0.5  # Reduce score of correlated features
+                    if feat in self.feature_scores:
+                        self.feature_scores[feat]['filter_reason'] = f"与特征 {kept_feature} 高相关 (r={corr:.4f})"
+                        self.feature_scores[feat]['score'] *= 0.5  # Reduce score of correlated features
         
         # Get final filtered list (remove filtered features)
         selected_features = []
@@ -472,55 +472,46 @@ class FeatureSelector:
         for feature in self.must_include:
             if feature in feature_cols:
                 selected_features.append(feature)
+                
+        # Add other top features up to max_features limit
+        features_to_add = max_features - len(selected_features)
         
-        # Add remaining features by score
-        for feature, score_data in sorted_features:
-            # Skip already included features
+        for feature, score_info in sorted_features:
+            # Skip if already in selected features (must-include)
             if feature in selected_features:
                 continue
                 
-            # Skip excluded features
-            if feature in self.must_exclude:
-                filtered_features.append((feature, '手动排除'))
+            # Skip if has filter reason
+            if score_info.get('filter_reason'):
+                filtered_features.append((feature, score_info.get('filter_reason')))
                 continue
                 
-            # Check filter reason
-            filter_reason = score_data.get('filter_reason')
-            if filter_reason:
-                filtered_features.append((feature, filter_reason))
-                continue
-                
-            # Add feature if limit not reached
+            # Add feature if under limit
             if len(selected_features) < max_features:
                 selected_features.append(feature)
             else:
-                filtered_features.append((feature, f"超出最大特征数量限制 ({max_features})"))
+                break
+                
+        # Print selection results
+        print(f"\n特征选择完成，选择了 {len(selected_features)} 个特征 (最大限制: {max_features})")
+        print(f"  - 必选特征数量: {len(self.must_include)}")
+        print(f"  - 根据筛选规则排除的特征数量: {len(filtered_features)}")
         
-        # Report results
-        print("\n特征选择结果:")
-        print(f"  选择特征数量: {len(selected_features)}")
-        print(f"  过滤特征数量: {len(filtered_features)}")
-        
-        # Report top selected features
-        print("\n选择的前20个特征:")
-        for i, feature in enumerate(selected_features[:20]):
-            if feature in feature_scores:
-                score = feature_scores[feature]['score']
-                print(f"  {i+1}. {feature}: 分数 = {score:.4f}")
-            else:
-                print(f"  {i+1}. {feature}: 手动包含")
-        
-        # Report top filtered features
         if filtered_features:
-            print("\n前10个被过滤的特征:")
-            for i, (feature, reason) in enumerate(filtered_features[:10]):
-                print(f"  {i+1}. {feature}: {reason}")
+            print("\n排除特征示例:")
+            for feature, reason in filtered_features[:10]:  # Show only top 10
+                print(f"  - {feature}: {reason}")
+            
+            if len(filtered_features) > 10:
+                print(f"  ... 及其他 {len(filtered_features) - 10} 个特征")
+                
+        # Export filtered features
+        filtered_df = pd.DataFrame([
+            {'feature': f, 'reason': r} for f, r in filtered_features
+        ])
         
-        # Save selected features list
-        output_file = os.path.join(MODEL_DIR, "selected_features.txt")
-        with open(output_file, 'w') as f:
-            for feature in selected_features:
-                f.write(f"{feature}\n")
+        if not filtered_df.empty:
+            filtered_df.to_csv(os.path.join(MODEL_DIR, "filtered_features.csv"), index=False)
         
         return selected_features
 
@@ -540,8 +531,9 @@ def trim_features_by_importance(
     correlation_threshold: float = 0.9, 
     must_include: Optional[List[str]] = None, 
     must_exclude: Optional[List[str]] = None, 
-    weights: Optional[Dict[str, float]] = None
-) -> List[str]:
+    weights: Optional[Dict[str, float]] = None,
+    return_scores: bool = False
+) -> Union[List[str], Tuple[List[str], Dict[str, Dict[str, Any]]]]:
     """
     Convenience function to trim features using the FeatureSelector class.
     
@@ -561,9 +553,13 @@ def trim_features_by_importance(
         must_include: Features that must be included
         must_exclude: Features that must be excluded
         weights: Weight dictionary for scoring factors
+        return_scores: Whether to return feature scores along with selected features
         
     Returns:
-        List of selected features
+        If return_scores is False:
+            List of selected features
+        If return_scores is True:
+            Tuple of (List of selected features, Dictionary of feature scores)
     """
     # Initialize feature selector
     selector = FeatureSelector(
@@ -587,5 +583,33 @@ def trim_features_by_importance(
         feature_stats=feature_stats,
         max_features=max_features
     )
+    
+    # Save selected features to file
+    with open(os.path.join(MODEL_DIR, "selected_features.txt"), 'w') as f:
+        for feature in selected_features:
+            f.write(f"{feature}\n")
+            
+    # Return results based on return_scores parameter
+    if return_scores:
+        # Get feature scores for visualization
+        feature_scores = selector.calculate_feature_scores(
+            feature_cols=feature_cols,
+            importance_dict=importance_dict,
+            psi_results=psi_results,
+            feature_stats=feature_stats
+        )
+        
+        # Add selection parameters to the scores dictionary for reference
+        feature_scores['_params'] = {
+            'min_importance_pct': min_importance_pct,
+            'max_psi': max_psi,
+            'max_missing_rate': max_missing_rate,
+            'min_variance': min_variance,
+            'min_iv': min_iv,
+            'correlation_threshold': correlation_threshold,
+            'weights': weights or selector.default_weights
+        }
+        
+        return selected_features, feature_scores
     
     return selected_features 
