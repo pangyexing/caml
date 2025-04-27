@@ -18,13 +18,13 @@ feature_file1 = "data/feature_file1.csv"
 format:
 input_key,recall_date,feature_1 ... feature_300
 recall_date: 20240101
-feature values: >=0.0 
+feature values: >=0.0 or NA
 
 feature_file2 = "data/feature_file2.csv"
 format:
 input_key,recall_date,feature_301 ... feature_500
 recall_date: 20240101
-feature values: >=0.0 
+feature values: >=0.0 or NA
 
 这四个文件的（input_key，recall_date）是大部分相同的，大约有85%的重叠率。
 
@@ -33,12 +33,14 @@ feature values: >=0.0
 import os
 import random
 from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Any
 
 import numpy as np
 import pandas as pd
 
 
-def generate_test_data(output_dir="data", num_samples=10000, num_dates=5, seed=42):
+def generate_test_data(output_dir: str = "data", num_samples: int = 10000, num_dates: int = 5, 
+                      seed: int = 42, na_ratio: float = 0.05) -> None:
     """
     Generate simulated test data for the customer conversion model.
     
@@ -47,6 +49,7 @@ def generate_test_data(output_dir="data", num_samples=10000, num_dates=5, seed=4
         num_samples: Number of unique input_keys to generate
         num_dates: Number of different recall dates to use
         seed: Random seed for reproducibility
+        na_ratio: Ratio of NA values to include in feature data (0.0 to 1.0)
     """
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
@@ -114,18 +117,31 @@ def generate_test_data(output_dir="data", num_samples=10000, num_dates=5, seed=4
     feature_df1 = label_df1[['input_key', 'recall_date']].copy()
     
     # Generate features with some correlation to labels
-    for i in range(1, 301):
-        if i <= 50:  # Strongly predictive features
-            base = label_df1['label_register'] * 2 + np.random.normal(0, 0.5, size=len(label_df1))
-        elif i <= 100:  # Moderately predictive features
-            base = label_df1['label_apply'] * 1.5 + np.random.normal(0, 0.7, size=len(label_df1))
-        elif i <= 150:  # Weakly predictive features
-            base = label_df1['label_approve'] * 1.2 + np.random.normal(0, 1.0, size=len(label_df1))
-        else:  # Noise features
-            base = np.random.normal(0, 1.0, size=len(label_df1))
-        
-        # Ensure non-negative values and add some skew
-        feature_df1[f'feature_{i}'] = np.maximum(0, base + np.random.exponential(0.5, size=len(label_df1)))
+    # Create a dictionary to store feature data before adding to DataFrame
+    feature_data1 = {}
+    
+    # Strongly predictive features (1-50)
+    for i in range(1, 51):
+        base = label_df1['label_register'] * 2 + np.random.normal(0, 0.5, size=len(label_df1))
+        feature_data1[f'feature_{i}'] = np.maximum(0, base + np.random.exponential(0.5, size=len(label_df1)))
+    
+    # Moderately predictive features (51-100)
+    for i in range(51, 101):
+        base = label_df1['label_apply'] * 1.5 + np.random.normal(0, 0.7, size=len(label_df1))
+        feature_data1[f'feature_{i}'] = np.maximum(0, base + np.random.exponential(0.5, size=len(label_df1)))
+    
+    # Weakly predictive features (101-150)
+    for i in range(101, 151):
+        base = label_df1['label_approve'] * 1.2 + np.random.normal(0, 1.0, size=len(label_df1))
+        feature_data1[f'feature_{i}'] = np.maximum(0, base + np.random.exponential(0.5, size=len(label_df1)))
+    
+    # Noise features (151-300)
+    for i in range(151, 301):
+        base = np.random.normal(0, 1.0, size=len(label_df1))
+        feature_data1[f'feature_{i}'] = np.maximum(0, base + np.random.exponential(0.5, size=len(label_df1)))
+    
+    # Add all features to the DataFrame at once using pd.concat
+    feature_df1 = pd.concat([feature_df1, pd.DataFrame(feature_data1)], axis=1)
     
     # Feature file 2: features 301-500
     # Use 80% of the same input_keys as feature_file1 but with some different dates
@@ -146,14 +162,36 @@ def generate_test_data(output_dir="data", num_samples=10000, num_dates=5, seed=4
     feature_df2 = pd.concat([feature_df2, new_df], ignore_index=True)
     
     # Generate features 301-500
-    for i in range(301, 501):
-        if i <= 350:  # Some predictive features
-            base = np.random.normal(1.0, 1.0, size=len(feature_df2))
-        else:  # Mostly noise features
-            base = np.random.normal(0.5, 1.5, size=len(feature_df2))
-        
-        # Ensure non-negative values
-        feature_df2[f'feature_{i}'] = np.maximum(0, base + np.random.exponential(0.3, size=len(feature_df2)))
+    feature_data2 = {}
+    
+    # Some predictive features (301-350)
+    for i in range(301, 351):
+        base = np.random.normal(1.0, 1.0, size=len(feature_df2))
+        feature_data2[f'feature_{i}'] = np.maximum(0, base + np.random.exponential(0.3, size=len(feature_df2)))
+    
+    # Mostly noise features (351-500)
+    for i in range(351, 501):
+        base = np.random.normal(0.5, 1.5, size=len(feature_df2))
+        feature_data2[f'feature_{i}'] = np.maximum(0, base + np.random.exponential(0.3, size=len(feature_df2)))
+    
+    # Add all features to the DataFrame at once
+    feature_df2 = pd.concat([feature_df2, pd.DataFrame(feature_data2)], axis=1)
+    
+    # Add NA values to features
+    if na_ratio > 0:
+        # For feature_df1
+        feature_cols1 = [col for col in feature_df1.columns if col.startswith('feature_')]
+        for col in feature_cols1:
+            # Create a mask for inserting NA values
+            na_mask = np.random.random(len(feature_df1)) < na_ratio
+            feature_df1.loc[na_mask, col] = np.nan
+
+        # For feature_df2
+        feature_cols2 = [col for col in feature_df2.columns if col.startswith('feature_')]
+        for col in feature_cols2:
+            # Create a mask for inserting NA values
+            na_mask = np.random.random(len(feature_df2)) < na_ratio
+            feature_df2.loc[na_mask, col] = np.nan
     
     # Save files
     label_df1.to_csv(os.path.join(output_dir, 'label_file1.csv'), index=False)
@@ -161,11 +199,21 @@ def generate_test_data(output_dir="data", num_samples=10000, num_dates=5, seed=4
     feature_df1.to_csv(os.path.join(output_dir, 'feature_file1.csv'), index=False)
     feature_df2.to_csv(os.path.join(output_dir, 'feature_file2.csv'), index=False)
     
+    # Calculate NA statistics
+    na_count1 = feature_df1[feature_cols1].isna().sum().sum()
+    na_count2 = feature_df2[feature_cols2].isna().sum().sum()
+    total_cells1 = len(feature_df1) * len(feature_cols1)
+    total_cells2 = len(feature_df2) * len(feature_cols2)
+    actual_na_ratio1 = na_count1 / total_cells1
+    actual_na_ratio2 = na_count2 / total_cells2
+    
     print(f"Generated test data in {output_dir}:")
     print(f"  label_file1.csv: {len(label_df1)} rows")
     print(f"  label_file2.csv: {len(label_df2)} rows")
     print(f"  feature_file1.csv: {len(feature_df1)} rows, {len(feature_df1.columns)-2} features")
+    print(f"    NA ratio: {actual_na_ratio1:.2%} ({na_count1} cells)")
     print(f"  feature_file2.csv: {len(feature_df2)} rows, {len(feature_df2.columns)-2} features")
+    print(f"    NA ratio: {actual_na_ratio2:.2%} ({na_count2} cells)")
 
 if __name__ == "__main__":
     generate_test_data()
