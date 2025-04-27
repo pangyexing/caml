@@ -117,6 +117,12 @@ def merge_feature_files(
         if key_column not in df.columns:
             raise ValueError(f"Key column '{key_column}' not found in {file}")
         
+        # 只保留ID_COLS和EXCLUDE_COLS之外的特征列
+        feature_cols = [col for col in df.columns if col not in EXCLUDE_COLS]
+        keep_cols = ID_COLS + feature_cols
+        df = df[keep_cols]
+        print(f"处理后保留的列数: {len(keep_cols)}")
+        
         feature_dfs.append(df)
     
     # Check if feature files exist
