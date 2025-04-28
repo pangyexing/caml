@@ -78,7 +78,7 @@ def fix_minus_sign_issue():
                 lambda x, pos: f"{x}".replace('\u2212', '-')))
             ax.yaxis.set_major_formatter(plt.FuncFormatter(
                 lambda x, pos: f"{x}".replace('\u2212', '-')))
-    except:
+    except (AttributeError, ValueError):
         # Skip if there are no figures or axes yet
         pass
         
@@ -153,7 +153,7 @@ def configure_fonts_for_plots():
             if os.path.exists(font_dir):
                 try:
                     fm.fontManager.addfont(font_dir)
-                except:
+                except (IOError, OSError):
                     pass
     
     # Additional settings for Windows platform
@@ -170,7 +170,7 @@ def configure_fonts_for_plots():
     
     # Set custom formatter for any future axes that get created
     try:
-        safe_formatter = fix_minus_sign_issue.get_safe_formatter()
+        fix_minus_sign_issue.get_safe_formatter()
         mpl.rcParams['axes.formatter.use_mathtext'] = False
         
         # Configure seaborn to use our safe formatter if it's available
@@ -187,7 +187,7 @@ def configure_fonts_for_plots():
             sns.axes_style = patched_axes_style
         except ImportError:
             pass
-    except:
+    except (AttributeError, TypeError):
         pass
         
     # Set the backend to agg for better compatibility

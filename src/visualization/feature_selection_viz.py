@@ -170,7 +170,7 @@ def plot_feature_selection_heatmap(
     )
     
     # Plot heatmap
-    ax = sns.heatmap(
+    sns.heatmap(
         heatmap_df, 
         annot=True,
         cmap=custom_cmap,
@@ -264,7 +264,7 @@ def plot_feature_correlation_network(
         importances = [G.nodes[n]['importance'] for n in G.nodes()]
         
         # Draw nodes
-        nodes = nx.draw_networkx_nodes(
+        nx.draw_networkx_nodes(
             G, pos, 
             node_size=scores,
             node_color=importances,
@@ -275,7 +275,7 @@ def plot_feature_correlation_network(
         # Create color bar for importance
         sm = plt.cm.ScalarMappable(cmap='viridis')
         sm.set_array(importances)
-        cbar = plt.colorbar(sm, label='Feature Importance')
+        plt.colorbar(sm, label='Feature Importance')
         
         # Draw edges with varying width based on correlation
         for (u, v, d) in G.edges(data=True):
@@ -288,7 +288,7 @@ def plot_feature_correlation_network(
             )
         
         # Draw labels with varying sizes
-        label_sizes = {n: 8 + G.nodes[n]['score'] * 4 for n in G.nodes()}
+        {n: 8 + G.nodes[n]['score'] * 4 for n in G.nodes()}
         nx.draw_networkx_labels(
             G, pos, 
             font_size=10,
