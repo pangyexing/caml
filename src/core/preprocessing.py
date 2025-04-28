@@ -18,7 +18,8 @@ def preprocess_data(
     target: str = 'label_apply',
     train_ratio: float = 0.7,
     test_ratio: float = 0.3,
-    random_state: int = 42
+    random_state: int = 42,
+    remove_all_zero_samples: bool = True
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Preprocess data and split into training and testing sets.
@@ -30,6 +31,7 @@ def preprocess_data(
         train_ratio: Training set ratio
         test_ratio: Testing set ratio
         random_state: Random state for reproducibility
+        remove_all_zero_samples: Whether to remove samples where all feature values are zero
     
     Returns:
         train_df: Preprocessed training DataFrame
@@ -51,6 +53,24 @@ def preprocess_data(
     # Drop any rows with missing target
     if target in df.columns:
         df = df.dropna(subset=[target])
+    
+    # Remove samples where all feature values are zero (potentially indicating lack of signal)
+    if remove_all_zero_samples:
+        # Identify feature columns (excluding ID columns, target and other excluded columns)
+        non_feature_cols = EXCLUDE_COLS + [target]
+        feature_cols = [col for col in df.columns if col not in non_feature_cols]
+        
+        # Detect rows where all feature values are zero
+        if feature_cols:
+            # Check if all values in feature columns are 0
+            all_zeros_mask = (df[feature_cols] == 0).all(axis=1)
+            
+            # Count and remove rows with all zeros
+            all_zeros_count = all_zeros_mask.sum()
+            if all_zeros_count > 0:
+                print(f"剔除全0特征值样本: {all_zeros_count} 行 ({all_zeros_count/len(df):.2%})")
+                print("这些样本可能缺乏信号或包含错误数据，移除它们有助于提高模型质量")
+                df = df[~all_zeros_mask]
     
     # Split data - Time-based or random based on presence of time column
     if time_column in df.columns and not df[time_column].isnull().all():

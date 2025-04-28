@@ -52,6 +52,10 @@ def parse_arguments():
                                 'feature_selection', 'final_model'],
                         help='Resume training from a specific stage')
     
+    # Data cleaning options
+    parser.add_argument('--remove-all-zero-samples', type=bool, default=True,
+                        help='Whether to remove samples where all feature values are zero')
+    
     # Hyperparameter tuning
     parser.add_argument('--max-evals', type=int, default=50,
                         help='Maximum number of hyperparameter evaluations')
@@ -133,7 +137,8 @@ def main():
         print("Preprocessing data...")
         train_df, test_df = preprocess_data(
             df, 
-            target=args.target
+            target=args.target,
+            remove_all_zero_samples=args.remove_all_zero_samples
         )
         
         # Run two-stage modeling pipeline
@@ -177,7 +182,8 @@ def main():
             print("Preprocessing data...")
             train_df, test_df = preprocess_data(
                 df, 
-                target=args.target
+                target=args.target,
+                remove_all_zero_samples=args.remove_all_zero_samples
             )
         else:
             print("Loading data from funnel_models directory...")
