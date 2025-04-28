@@ -18,7 +18,7 @@ from sklearn2pmml import sklearn2pmml
 from sklearn2pmml.pipeline import PMMLPipeline
 from xgboost import XGBClassifier
 
-from src.core.config import DEFAULT_XGB_PARAMS, EXCLUDE_COLS, MODEL_DIR
+from src.core.config import DEFAULT_XGB_PARAMS, EXCLUDE_COLS, MODEL_DIR, FEATURE_SELECTION_PARAMS, FEATURE_SELECTION_WEIGHTS
 from src.evaluation.metrics import evaluate_predictions
 from src.features.analysis import (
     analyze_feature_interactions,
@@ -291,10 +291,10 @@ def train_final_model(
     # Also save as pickle for easier Python reuse
     joblib.dump(model, os.path.join(MODEL_DIR, "final_model.joblib"))
     
-    # Save selected features
-    with open(os.path.join(MODEL_DIR, "selected_features.txt"), 'w') as f:
-        for feature in features:
-            f.write(f"{feature}\n")
+    # # Save selected features
+    # with open(os.path.join(MODEL_DIR, "selected_features.txt"), 'w') as f:
+    #     for feature in features:
+    #         f.write(f"{feature}\n")
     
     return pipeline, model, metrics
 
@@ -558,10 +558,17 @@ def two_stage_modeling_pipeline(
             selected_features, feature_scores = trim_features_by_importance(
                 initial_features,
                 feature_importance,
-                max_features=200,
+                max_features=FEATURE_SELECTION_PARAMS['max_features'],
                 psi_results=psi_results,
                 feature_stats=feature_stats,
                 train_df=train_df,
+                min_importance_pct=FEATURE_SELECTION_PARAMS['min_importance_pct'],
+                max_psi=FEATURE_SELECTION_PARAMS['max_psi'],
+                max_missing_rate=FEATURE_SELECTION_PARAMS['max_missing_rate'],
+                min_variance=FEATURE_SELECTION_PARAMS['min_variance'],
+                min_iv=FEATURE_SELECTION_PARAMS['min_iv'],
+                correlation_threshold=FEATURE_SELECTION_PARAMS['correlation_threshold'],
+                weights=FEATURE_SELECTION_WEIGHTS,
                 must_include=must_include,
                 return_scores=True  # Return feature score details for visualization
             )

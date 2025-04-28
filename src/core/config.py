@@ -26,12 +26,13 @@ EXCLUDE_COLS = ID_COLS + LABEL_COLS + OTHER_COLS
 
 # Feature selection parameters
 FEATURE_SELECTION_PARAMS = {
-    'min_importance_pct': 0.005,  # Minimum relative importance
+    'min_importance_pct': 0.001,  # Minimum relative importance
     'max_psi': 0.25,              # Maximum PSI for stability
     'max_missing_rate': 0.99,     # Maximum missing rate
     'min_variance': 1e-6,         # Minimum variance threshold
     'min_iv': 0.02,               # Minimum information value
     'correlation_threshold': 0.9, # Correlation threshold for feature removal
+    'max_features': 300,          # Maximum number of features to select
 }
 
 # Weights for feature selection scoring

@@ -8,9 +8,10 @@ Feature selection functionality.
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
 
-from src.core.config import MODEL_DIR
+from src.core.config import FEATURE_SELECTION_PARAMS, MODEL_DIR
 
 
 class FeatureSelector:
@@ -406,7 +407,7 @@ class FeatureSelector:
         importance_dict: Optional[Dict[str, float]] = None, 
         psi_results: Optional[Dict] = None, 
         feature_stats: Optional[pd.DataFrame] = None, 
-        max_features: int = 200
+        max_features: int = FEATURE_SELECTION_PARAMS['max_features']
     ) -> List[str]:
         """
         Select features based on multiple criteria.
@@ -519,7 +520,7 @@ class FeatureSelector:
 def trim_features_by_importance(
     feature_cols: List[str], 
     importance_dict: Optional[Dict[str, float]] = None, 
-    max_features: int = 200,
+    max_features: int = FEATURE_SELECTION_PARAMS['max_features'],
     psi_results: Optional[Dict] = None, 
     feature_stats: Optional[pd.DataFrame] = None, 
     train_df: Optional[pd.DataFrame] = None, 
