@@ -164,6 +164,10 @@ def main():
             print("Error: Feature list not found. Please run train mode first.")
             sys.exit(1)
         
+        # Load feature list
+        features = load_feature_list(features_file)
+        print(f"Loaded {len(features)} features from {features_file}")
+        
         if args.data:
             print(f"Loading data from {args.data}...")
             
@@ -183,7 +187,8 @@ def main():
             train_df, test_df = preprocess_data(
                 df, 
                 target=args.target,
-                remove_all_zero_samples=args.remove_all_zero_samples
+                remove_all_zero_samples=args.remove_all_zero_samples,
+                feature_subset=features
             )
         else:
             print("Loading data from funnel_models directory...")
@@ -200,10 +205,6 @@ def main():
             test_df = pd.read_csv(test_file)
             
             print(f"Data loaded, train shape: {train_df.shape}, test shape: {test_df.shape}")
-        
-        # Load feature list
-        features = load_feature_list(features_file)
-        print(f"Loaded {len(features)} features from {features_file}")
         
         # Run hyperparameter optimization
         results = hyperopt_xgb(

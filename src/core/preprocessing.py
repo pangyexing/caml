@@ -19,7 +19,8 @@ def preprocess_data(
     train_ratio: float = 0.7,
     test_ratio: float = 0.3,
     random_state: int = 42,
-    remove_all_zero_samples: bool = True
+    remove_all_zero_samples: bool = True,
+    feature_subset: List[str] = None
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Preprocess data and split into training and testing sets.
@@ -32,6 +33,7 @@ def preprocess_data(
         test_ratio: Testing set ratio
         random_state: Random state for reproducibility
         remove_all_zero_samples: Whether to remove samples where all feature values are zero
+        feature_subset: Specific features to check for zero values (if None, all available features are used)
     
     Returns:
         train_df: Preprocessed training DataFrame
@@ -58,7 +60,15 @@ def preprocess_data(
     if remove_all_zero_samples:
         # Identify feature columns (excluding ID columns, target and other excluded columns)
         non_feature_cols = EXCLUDE_COLS + [target]
-        feature_cols = [col for col in df.columns if col not in non_feature_cols]
+        
+        if feature_subset is not None:
+            # Use only the specified feature subset that exists in the dataframe
+            feature_cols = [col for col in feature_subset if col in df.columns]
+            subset_desc = "指定的特征子集"
+        else:
+            # Use all available features
+            feature_cols = [col for col in df.columns if col not in non_feature_cols]
+            subset_desc = "所有特征"
         
         # Detect rows where all feature values are zero
         if feature_cols:
@@ -68,7 +78,7 @@ def preprocess_data(
             # Count and remove rows with all zeros
             all_zeros_count = all_zeros_mask.sum()
             if all_zeros_count > 0:
-                print(f"剔除全0特征值样本: {all_zeros_count} 行 ({all_zeros_count/len(df):.2%})")
+                print(f"剔除{subset_desc}全0特征值样本: {all_zeros_count} 行 ({all_zeros_count/len(df):.2%})")
                 print("这些样本可能缺乏信号或包含错误数据，移除它们有助于提高模型质量")
                 df = df[~all_zeros_mask]
     
