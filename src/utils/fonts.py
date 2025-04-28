@@ -8,9 +8,10 @@ Font utilities for matplotlib plots.
 import os
 import sys
 import warnings
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
+
 import matplotlib as mpl
+import matplotlib.font_manager as fm
+import matplotlib.pyplot as plt
 
 
 def fix_minus_sign_issue():
@@ -28,10 +29,13 @@ def fix_minus_sign_issue():
     plt.rcParams['axes.unicode_minus'] = False
     
     # Import the formatters
-    from matplotlib.ticker import ScalarFormatter, StrMethodFormatter, FormatStrFormatter
-    
     # Also patch matplotlib.ticker directly
     import matplotlib.ticker as ticker
+    from matplotlib.ticker import (
+        FormatStrFormatter,
+        ScalarFormatter,
+        StrMethodFormatter,
+    )
     
     # Replace the negative sign in the ticker._mathdefault method
     original_mathdefault = getattr(ticker, '_mathdefault', None)
@@ -105,32 +109,30 @@ def configure_fonts_for_plots():
     # Apply the minus sign fix first
     fix_minus_sign_issue()
     
-    # Try to find a font that supports Chinese characters
-    chinese_fonts = ['SimHei', 'Microsoft YaHei', 'WenQuanYi Zen Hei', 'Noto Sans CJK JP', 
-                    'Noto Sans CJK SC', 'Noto Sans CJK TC', 'AR PL UMing CN']
+    # Suppress font warnings
+    warnings.filterwarnings('ignore', message="Font family ['SimHei'] not found.*")
+    warnings.filterwarnings('ignore', message="Glyph \d+ .* missing from current font")
     
-    # Add fallback fonts that generally have better Unicode coverage
+    # First check which fonts are actually available on the system
+    # DejaVu Sans is already available on most systems as a fallback
+    available_fonts = set(f.name for f in fm.FontManager().ttflist)
+    
+    # Prioritize fallback fonts first that have better Unicode coverage
     fallback_fonts = ['DejaVu Sans', 'Arial', 'Verdana', 'Tahoma', 'Helvetica']
     
-    # Add these fonts to the sans-serif family
-    plt.rcParams['font.sans-serif'] = chinese_fonts + fallback_fonts + plt.rcParams.get('font.sans-serif', [])
+    # Chinese fonts - only use if actually available
+    chinese_fonts = []
+    for font_name in ['Noto Sans CJK SC', 'Noto Sans CJK TC', 'Noto Sans CJK JP', 
+                      'Microsoft YaHei', 'WenQuanYi Zen Hei', 'SimHei', 'AR PL UMing CN']:
+        if font_name in available_fonts:
+            chinese_fonts.append(font_name)
     
-    # Try to set a specific font as primary if available
-    found_font = False
-    for font_name in chinese_fonts + fallback_fonts:
-        try:
-            font_path = fm.findfont(fm.FontProperties(family=font_name))
-            if font_path and os.path.exists(font_path):
-                plt.rcParams['font.family'] = 'sans-serif'
-                plt.rcParams['font.sans-serif'].insert(0, font_name)  # Set as primary font
-                found_font = True
-                break
-        except Exception:
-            continue
-            
-    # If no font was found, try to use the default system font
-    if not found_font:
-        plt.rcParams['font.family'] = 'sans-serif'
+    # Set the font order: available Chinese fonts first, then fallbacks
+    font_order = chinese_fonts + fallback_fonts
+    
+    # Set the font configuration
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = font_order + plt.rcParams.get('font.sans-serif', [])
     
     # Explicitly set figure.autolayout to True to better handle text
     plt.rcParams['figure.autolayout'] = True
@@ -143,8 +145,19 @@ def configure_fonts_for_plots():
     # Force simpler tick formatting that doesn't use Unicode
     mpl.rcParams['axes.formatter.use_mathtext'] = False
     
+    # Additional settings for macOS
+    if sys.platform == 'darwin':
+        # Try to find system fonts on macOS
+        system_font_dirs = ['/System/Library/Fonts', '/Library/Fonts', os.path.expanduser('~/Library/Fonts')]
+        for font_dir in system_font_dirs:
+            if os.path.exists(font_dir):
+                try:
+                    fm.fontManager.addfont(font_dir)
+                except:
+                    pass
+    
     # Additional settings for Windows platform
-    if sys.platform.startswith('win'):
+    elif sys.platform.startswith('win'):
         # Try to register additional system fonts on Windows
         try:
             fm._rebuild()
@@ -152,13 +165,11 @@ def configure_fonts_for_plots():
             pass
         
         # Windows-specific settings
-        plt.rcParams['font.family'] = 'sans-serif'
         if 'SimHei' in mpl.font_manager.findSystemFonts(fontpaths=None, fontext='ttf'):
             plt.rcParams['font.sans-serif'] = ['SimHei'] + plt.rcParams['font.sans-serif']
     
     # Set custom formatter for any future axes that get created
     try:
-        from matplotlib.ticker import Formatter
         safe_formatter = fix_minus_sign_issue.get_safe_formatter()
         mpl.rcParams['axes.formatter.use_mathtext'] = False
         

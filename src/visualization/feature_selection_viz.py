@@ -6,7 +6,7 @@ Visualization functions for feature selection results.
 """
 
 import os
-from typing import Dict, List, Optional, Any, Union, Tuple
+from typing import Any, Dict, List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
