@@ -21,7 +21,7 @@ for directory in [MODEL_DIR, TUNED_MODELS_DIR, OPTIMIZATION_DIR, DEPLOYMENT_DIR]
 # Column exclusions for feature selection
 ID_COLS = ['input_key', 'recall_date']
 LABEL_COLS = ['label_register', 'label_apply', 'label_approve']
-OTHER_COLS = ['time_bin', 'score']
+OTHER_COLS = ['time_bin', 'score', 'customer_name']
 EXCLUDE_COLS = ID_COLS + LABEL_COLS + OTHER_COLS
 
 # Feature selection parameters
