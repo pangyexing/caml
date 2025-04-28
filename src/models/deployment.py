@@ -95,7 +95,7 @@ def prepare_prediction_data(
         if prediction_df[col].isna().any():
             if prediction_df[col].dtype in ['float64', 'int64']:
                 # For numeric columns, fill with median
-                prediction_df[col] = prediction_df[col].fillna(prediction_df[col].median())
+                prediction_df[col] = prediction_df[col].fillna(0.0)
             else:
                 # For categorical columns, fill with most frequent value
                 most_common = prediction_df[col].mode()[0] if not prediction_df[col].mode().empty else 0
