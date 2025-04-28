@@ -25,7 +25,7 @@ def analyze_feature_stability(
     df: pd.DataFrame, 
     time_column: str = 'recall_date', 
     n_bins: int = 5,
-    n_jobs: int = 4
+    n_jobs: int = -1
 ) -> Dict[str, Dict[str, Any]]:
     """
     Analyze feature stability using Population Stability Index (PSI).
