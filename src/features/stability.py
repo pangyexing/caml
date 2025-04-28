@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from src.core.config import MODEL_DIR
+from src.core.config import MODEL_DIR, EXCLUDE_COLS
 from src.utils import configure_fonts_for_plots
 
 # Call the font configuration function at module load time
@@ -46,7 +46,7 @@ def analyze_feature_stability(
     df['time_bin'] = pd.cut(df[time_column], bins=n_bins, labels=False)
     
     # Exclude non-feature columns
-    exclude_cols = ['input_key', time_column, 'time_bin', 'label_register', 'label_apply', 'label_approve']
+    exclude_cols = EXCLUDE_COLS + ['time_bin']
     feature_cols = [col for col in df.columns if col not in exclude_cols]
     
     # Calculate PSI in parallel
