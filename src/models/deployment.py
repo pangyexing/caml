@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 from pypmml import Model as PyPMMLModel
 
-from src.core.config import DEPLOYMENT_DIR
+from src.core.config import DEPLOYMENT_DIR, ID_COLS
 from src.evaluation.metrics import calculate_lift, plot_lift_chart
 from src.visualization.plots import create_score_bins, plot_score_distribution
 from src.utils.common import serialize_to_json
@@ -253,6 +253,16 @@ def deploy_model(
         'score': y_pred_proba
     })
     
+    # Add ID columns from test_df to scores_df
+    for col in ID_COLS:
+        if col in test_df.columns:
+            scores_df[col] = test_df[col]
+    
+    # Add feature columns to scores_df
+    for feature in features:
+        if feature in test_df.columns:
+            scores_df[feature] = test_df[feature]
+    
     if target and target in test_df.columns:
         from src.evaluation.metrics import evaluate_predictions
         
@@ -430,6 +440,16 @@ def batch_prediction(
             'score': y_pred_proba,
             'prediction': y_pred
         })
+    
+    # Add ID columns from input_df to result_df
+    for col in ID_COLS:
+        if col in input_df.columns and col != key_column:
+            result_df[col] = input_df[col]
+    
+    # Add feature columns to result_df
+    for feature in features:
+        if feature in input_df.columns:
+            result_df[feature] = input_df[feature]
     
     # Save results
     result_df.to_csv(output_file, index=False)
