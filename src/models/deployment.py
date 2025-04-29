@@ -218,15 +218,21 @@ def deploy_model(
     model = load_model(model_path)
     
     # Get features for prediction
-    try:
-        features = get_model_features(model)
-        print(f"从模型获取特征列表，共 {len(features)} 个特征")
-    except ValueError:
-        if features_file:
-            features = load_feature_list(features_file)
-            print(f"从文件加载特征列表，共 {len(features)} 个特征")
-        else:
-            raise ValueError("Could not get features from model and no features file provided")
+    if features_file:
+        features = load_feature_list(features_file)
+        print(f"从文件加载特征列表，共 {len(features)} 个特征")
+    else:
+        raise ValueError("Could not get features from model and no features file provided")
+
+    # try:
+    #     features = get_model_features(model)
+    #     print(f"从模型获取特征列表，共 {len(features)} 个特征")
+    # except ValueError:
+    #     if features_file:
+    #         features = load_feature_list(features_file)
+    #         print(f"从文件加载特征列表，共 {len(features)} 个特征")
+    #     else:
+    #         raise ValueError("Could not get features from model and no features file provided")
     
     # Save feature list
     feature_list_path = os.path.join(output_dir, "model_features.txt")
