@@ -254,20 +254,21 @@ def deploy_model(
         'feature_list_path': feature_list_path
     }
     
-    # Save scores to DataFrame
-    scores_df = pd.DataFrame({
-        'score': y_pred_proba
-    })
+    # Create score dictionary for initial DataFrame
+    scores_dict = {'score': y_pred_proba}
     
-    # Add ID columns from test_df to scores_df
+    # Add ID columns from test_df
     for col in ID_COLS:
         if col in test_df.columns:
-            scores_df[col] = test_df[col]
+            scores_dict[col] = test_df[col].values
     
-    # Add feature columns to scores_df
-    for feature in features:
-        if feature in test_df.columns:
-            scores_df[feature] = test_df[feature]
+    # Add feature columns to scores dictionary
+    features_to_include = [f for f in features if f in test_df.columns]
+    for feature in features_to_include:
+        scores_dict[feature] = test_df[feature].values
+    
+    # Create scores DataFrame all at once to avoid fragmentation
+    scores_df = pd.DataFrame(scores_dict)
     
     if target and target in test_df.columns:
         from src.evaluation.metrics import evaluate_predictions
@@ -319,11 +320,11 @@ def deploy_model(
             'metrics': {k: v for k, v in metrics.items() if not isinstance(v, np.ndarray)}
         })
         
-        # Add target to scores DataFrame
-        scores_df['target'] = test_df[target]
-        
-        # Make binary predictions with selected threshold
-        scores_df['prediction'] = (scores_df['score'] >= threshold).astype(int)
+        # Add target and prediction to scores DataFrame (all at once)
+        scores_df = scores_df.assign(
+            target=test_df[target].values,
+            prediction=(scores_df['score'] >= threshold).astype(int)
+        )
         
         # Print evaluation summary
         print(f"\n模型评估结果 (阈值={threshold:.4f}):")
@@ -348,8 +349,8 @@ def deploy_model(
         # Use default threshold if not provided
         threshold = 0.5 if threshold is None else threshold
         
-        # Make binary predictions with selected threshold
-        scores_df['prediction'] = (scores_df['score'] >= threshold).astype(int)
+        # Make binary predictions with selected threshold (assign all at once)
+        scores_df = scores_df.assign(prediction=(scores_df['score'] >= threshold).astype(int))
         
         # Add to deployment results
         deployment_results.update({
@@ -434,28 +435,28 @@ def batch_prediction(
     # Make predictions
     y_pred_proba, y_pred = predict_with_model(model, X, threshold)
     
-    # Create result DataFrame
+    # Create a dictionary for all columns to include
+    result_dict = {
+        'score': y_pred_proba,
+        'prediction': y_pred
+    }
+    
+    # Add key column if it exists
     if key_column in input_df.columns:
-        result_df = pd.DataFrame({
-            key_column: input_df[key_column],
-            'score': y_pred_proba,
-            'prediction': y_pred
-        })
-    else:
-        result_df = pd.DataFrame({
-            'score': y_pred_proba,
-            'prediction': y_pred
-        })
+        result_dict[key_column] = input_df[key_column].values
     
-    # Add ID columns from input_df to result_df
-    for col in ID_COLS:
-        if col in input_df.columns and col != key_column:
-            result_df[col] = input_df[col]
+    # Add ID columns from input_df
+    id_cols_to_include = [col for col in ID_COLS if col in input_df.columns and col != key_column]
+    for col in id_cols_to_include:
+        result_dict[col] = input_df[col].values
     
-    # Add feature columns to result_df
-    for feature in features:
-        if feature in input_df.columns:
-            result_df[feature] = input_df[feature]
+    # Add feature columns
+    features_to_include = [f for f in features if f in input_df.columns]
+    for feature in features_to_include:
+        result_dict[feature] = input_df[feature].values
+    
+    # Create result DataFrame all at once to avoid fragmentation
+    result_df = pd.DataFrame(result_dict)
     
     # Save results
     result_df.to_csv(output_file, index=False)
