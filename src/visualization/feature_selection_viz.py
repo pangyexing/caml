@@ -33,6 +33,11 @@ def plot_feature_selection_summary(
         top_n: Number of top features to display
         filepath: Path to save the figure
     """
+    # 调试：打印feature_scores中的前几项，查看数据结构和值
+    print("调试 plot_feature_selection_summary:")
+    for i, (feature, scores) in enumerate(list(feature_scores.items())[:3]):
+        print(f"特征 {feature} 得分: {scores}")
+    
     # Set up figure
     plt.figure(figsize=(14, 10))
     
@@ -53,14 +58,35 @@ def plot_feature_selection_summary(
     
     # Take top N features
     for feature, scores in sorted_features[:top_n]:
+        if feature == '_params':  # 跳过参数字典
+            continue
+            
         features.append(feature)
         importance_scores.append(scores.get('importance', 0) * 0.4)  # Assuming 0.4 weight
         psi_scores.append(scores.get('psi', 0) * 0.2)  # Assuming 0.2 weight
         # Combine stats scores (missing, variance, iv) with their weights
         stats_score = scores.get('stats', 0) * 0.4  # Assuming 0.4 total weight for stats
+        # 如果没有stats键，尝试计算一个综合统计分数
+        if stats_score == 0 and 'missing_rate' in scores:
+            missing_score = 1.0 - scores.get('missing_rate', 0)
+            variance_score = min(1.0, scores.get('variance', 0) / 0.01) if scores.get('variance', 0) > 0 else 0
+            iv_score = min(1.0, scores.get('iv', 0) / 0.02) if scores.get('iv', 0) > 0 else 0
+            stats_score = (missing_score * 0.1 + variance_score * 0.1 + iv_score * 0.2) / 0.4 * 0.4
         stats_scores.append(stats_score)
         total_scores.append(scores.get('score', 0))
         filter_reasons.append(scores.get('filter_reason', None))
+    
+    # 调试：打印处理后的数据
+    print(f"处理后数据 - 特征数量: {len(features)}")
+    print(f"Importance分数: {importance_scores[:3]}")
+    print(f"Stability分数: {psi_scores[:3]}")
+    print(f"Statistics分数: {stats_scores[:3]}")
+    print(f"总分: {total_scores[:3]}")
+    
+    # 调试：打印数据总和和极值
+    print(f"Importance总和: {sum(importance_scores):.4f}, 最大值: {max(importance_scores) if importance_scores else 0:.4f}")
+    print(f"Stability总和: {sum(psi_scores):.4f}, 最大值: {max(psi_scores) if psi_scores else 0:.4f}")
+    print(f"Statistics总和: {sum(stats_scores):.4f}, 最大值: {max(stats_scores) if stats_scores else 0:.4f}")
     
     # Create DataFrame for plotting
     plot_df = pd.DataFrame({
@@ -74,6 +100,10 @@ def plot_feature_selection_summary(
     
     # Reverse order for better visualization
     plot_df = plot_df.iloc[::-1].reset_index(drop=True)
+    
+    # 调试：打印最终DataFrame的前几行
+    print("最终DataFrame的前几行:")
+    print(plot_df.head())
     
     # Plot stacked bars
     ax = plt.subplot(111)
@@ -124,12 +154,17 @@ def plot_feature_selection_heatmap(
         top_n: Number of top features to display
         filepath: Path to save the figure
     """
+    # 调试：打印feature_scores中的前几项，查看数据结构和值
+    print("调试 plot_feature_selection_heatmap:")
+    for i, (feature, scores) in enumerate(list(feature_scores.items())[:3]):
+        print(f"特征 {feature} 得分详情: {scores}")
+    
     # Set up figure
     plt.figure(figsize=(16, 12))
     
     # Sort features by total score
     sorted_features = sorted(
-        feature_scores.items(), 
+        [(f, s) for f, s in feature_scores.items() if f != '_params'],  # 过滤掉_params
         key=lambda x: x[1].get('score', 0), 
         reverse=True
     )
@@ -153,16 +188,36 @@ def plot_feature_selection_heatmap(
         }
         metrics.append(feature_metrics)
     
+    # 调试：检查数据分布情况
+    all_metrics = pd.DataFrame(metrics, index=features)
+    for col in all_metrics.columns:
+        values = all_metrics[col].values
+        print(f"列 {col} - 最小值: {values.min():.4f}, 最大值: {values.max():.4f}, 平均值: {values.mean():.4f}, 中位数: {np.median(values):.4f}")
+    
+    # 调试：打印处理后的指标数据
+    print("处理后的指标数据 (前3个特征):")
+    for i in range(min(3, len(metrics))):
+        print(f"特征 {features[i]} 指标: {metrics[i]}")
+    
     # Create DataFrame for heatmap
     heatmap_df = pd.DataFrame(metrics, index=features)
+    
+    # 调试：打印归一化前的DataFrame
+    print("归一化前的DataFrame头部:")
+    print(heatmap_df.head())
     
     # Normalize columns to 0-1 range for better visualization
     for col in heatmap_df.columns:
         if col != 'Total Score':  # Keep total score as is
             col_min = heatmap_df[col].min()
             col_max = heatmap_df[col].max()
+            print(f"列 {col} 的最小值: {col_min}, 最大值: {col_max}")
             if col_max > col_min:
                 heatmap_df[col] = (heatmap_df[col] - col_min) / (col_max - col_min)
+    
+    # 调试：打印归一化后的DataFrame
+    print("归一化后的DataFrame头部:")
+    print(heatmap_df.head())
     
     # Create a custom colormap that goes from red to green
     custom_cmap = LinearSegmentedColormap.from_list(
@@ -416,6 +471,46 @@ def visualize_feature_selection_results(
         train_df: Training DataFrame (for correlation analysis)
         output_dir: Directory to save visualizations
     """
+    # 调试：检查feature_scores和feature_stats的有效性
+    print("\n======= 调试：visualize_feature_selection_results =======")
+    print(f"feature_scores类型: {type(feature_scores)}")
+    print(f"feature_scores长度: {len(feature_scores) if feature_scores else 0}")
+    if feature_scores:
+        print("feature_scores示例 (前3项):")
+        for i, (feature, scores) in enumerate(list(feature_scores.items())[:3]):
+            print(f"  {feature}: {scores}")
+    
+    print(f"\nfeature_stats类型: {type(feature_stats)}")
+    print(f"feature_stats形状: {feature_stats.shape if isinstance(feature_stats, pd.DataFrame) else 'N/A'}")
+    if isinstance(feature_stats, pd.DataFrame) and not feature_stats.empty:
+        print("feature_stats列名:", feature_stats.columns.tolist())
+        print("feature_stats示例 (前3行):")
+        print(feature_stats.head(3))
+    
+    print(f"\nselected_features长度: {len(selected_features)}")
+    print(f"selected_features示例: {selected_features[:5] if len(selected_features) >= 5 else selected_features}")
+    
+    # 检查数据有效性
+    if not feature_scores:
+        print("错误: feature_scores为空，无法生成可视化")
+        return
+    
+    # 检查feature_scores中是否有必要的键
+    sample_score = next(iter(feature_scores.values()))
+    print(f"\nfeature_scores键检查: {list(sample_score.keys())}")
+    required_keys = ['importance', 'psi', 'score', 'missing_rate', 'variance', 'iv']
+    missing_keys = [key for key in required_keys if key not in sample_score]
+    if missing_keys:
+        print(f"警告: feature_scores中缺少以下键: {missing_keys}")
+        
+        # 为缺失的键添加默认值，以防可视化失败
+        print("修复: 为缺失的键添加默认值")
+        for feature, scores in feature_scores.items():
+            for key in missing_keys:
+                if key not in scores:
+                    scores[key] = 0.0
+                    print(f"  为 {feature} 添加默认键 {key}=0.0")
+    
     # Set output directory
     if output_dir is None:
         output_dir = os.path.join(MODEL_DIR, 'feature_selection_viz')
@@ -430,7 +525,7 @@ def visualize_feature_selection_results(
     print("生成特征选择得分明细图...")
     plot_feature_selection_summary(
         feature_scores,
-        top_n=30,
+        top_n=70,
         filepath=os.path.join(output_dir, 'feature_selection_summary.png')
     )
     
@@ -438,7 +533,7 @@ def visualize_feature_selection_results(
     print("生成特征选择指标热图...")
     plot_feature_selection_heatmap(
         feature_scores,
-        top_n=30,
+        top_n=70,
         filepath=os.path.join(output_dir, 'feature_selection_heatmap.png')
     )
     
@@ -448,7 +543,7 @@ def visualize_feature_selection_results(
         plot_feature_correlation_network(
             train_df,
             feature_scores,
-            top_n=30,
+            top_n=70,
             correlation_threshold=0.7,
             filepath=os.path.join(output_dir, 'feature_correlation_network.png')
         )

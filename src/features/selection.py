@@ -611,6 +611,45 @@ def trim_features_by_importance(
             'weights': weights or selector.default_weights
         }
         
+        # 增强feature_scores字典，确保它包含所有必要的特征统计信息
+        # 创建feature_stats的便捷查询字典
+        stats_dict = {}
+        if feature_stats is not None and not feature_stats.empty:
+            for _, row in feature_stats.iterrows():
+                if 'feature' in row:
+                    stats_dict[row['feature']] = row
+        
+        # 遍历所有特征，确保每个特征都有完整的统计信息
+        for feature, scores in feature_scores.items():
+            if feature == '_params':  # 跳过参数字典
+                continue
+                
+            # 确保必要的键存在
+            for key in ['importance', 'psi', 'missing_rate', 'variance', 'iv', 'correlation_with_target']:
+                if key not in scores:
+                    scores[key] = 0.0  # 设置默认值
+            
+            # 从feature_stats添加详细统计数据
+            if feature in stats_dict:
+                stats_row = stats_dict[feature]
+                scores['missing_rate'] = stats_row.get('missing_or_zero_rate', 0.0)
+                scores['variance'] = stats_row.get('variance', 0.0)
+                scores['iv'] = stats_row.get('iv', 0.0)
+                scores['correlation_with_target'] = abs(stats_row.get('correlation_with_target', 0.0))
+                
+            # 从importance_dict添加重要性分数
+            if importance_dict and feature in importance_dict:
+                total_importance = sum(importance_dict.values()) if importance_dict else 1.0
+                scores['importance'] = importance_dict[feature] / total_importance if total_importance > 0 else 0.0
+                
+            # 从psi_results添加稳定性分数
+            if psi_results and feature in psi_results:
+                psi_value = psi_results[feature].get('avg_psi', 0.0)
+                scores['psi'] = 1.0 - min(psi_value / max_psi, 1.0) if max_psi > 0 else 0.0
+        
+        # 打印数据检查信息
+        print(f"\n特征评分数据增强完成，特征数量: {len(feature_scores) - 1}")  # -1 因为包含_params
+        
         return selected_features, feature_scores
     
     return selected_features 
