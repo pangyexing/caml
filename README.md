@@ -11,23 +11,33 @@ This repository contains a machine learning system specifically designed for pre
 - **Comprehensive hyperparameter optimization**: Using Hyperopt for finding optimal model parameters
 - **Model deployment utilities**: Easy deployment with consistent feature preprocessing
 - **Multi-threaded feature analysis**: Parallel processing for efficient feature evaluation
-- **Chinese/English bilingual support**: Supports outputs in both languages
+- **Visualization tools**: Comprehensive plotting utilities for feature analysis and model performance
 
 ## Project Structure
 
 ```
 .
 ├── src/                        # Source code
-│   ├── __init__.py             # Package initialization
-│   ├── config.py               # Configuration parameters and constants
-│   ├── preprocessing.py        # Data preprocessing and cleaning
-│   ├── feature_engineering.py  # Feature selection and analysis
-│   ├── modeling.py             # Core model training functionality
-│   ├── model_utils.py          # Shared model utilities
-│   ├── hyperopt_tuning.py      # Hyperparameter optimization
-│   ├── evaluation.py           # Model evaluation metrics and visualization
-│   ├── deployment.py           # Model deployment utilities
-│   ├── utils.py                # Utility functions
+│   ├── core/                   # Core functionality
+│   │   ├── config.py           # Configuration parameters and constants
+│   │   └── preprocessing.py    # Data preprocessing and cleaning
+│   ├── features/               # Feature engineering and analysis
+│   │   ├── analysis.py         # Feature importance and analysis
+│   │   ├── selection.py        # Feature selection algorithms
+│   │   └── stability.py        # Feature stability measurement (PSI)
+│   ├── models/                 # Model training and deployment
+│   │   ├── training.py         # Core model training functionality
+│   │   ├── hyperopt_tuning.py  # Hyperparameter optimization
+│   │   └── deployment.py       # Model deployment utilities
+│   ├── evaluation/             # Model evaluation
+│   │   └── metrics.py          # Evaluation metrics and scoring
+│   ├── visualization/          # Visualization utilities
+│   │   ├── plots.py            # Common plotting functions
+│   │   └── feature_selection_viz.py # Feature selection visualizations
+│   ├── utils/                  # Utility functions
+│   │   ├── common.py           # Common utilities
+│   │   ├── fonts.py            # Font configuration for plots
+│   │   └── imports.py          # Common imports
 │   └── main.py                 # Main executable script
 ├── funnel_models/              # Generated directory for model artifacts
 ├── tuned_models/               # Generated directory for tuned models
@@ -60,7 +70,7 @@ The system provides a command-line interface through `src/main.py` with several 
 
 ### Data Validation
 
-Check for duplicate features across files or duplicate keys within files:
+Check for duplicate features across files:
 
 ```
 python -m src.main --mode check --features <feature_file1> <feature_file2> ...
@@ -68,10 +78,10 @@ python -m src.main --mode check --features <feature_file1> <feature_file2> ...
 
 ### Merging Feature Files
 
-Merge multiple feature files and process with sample files:
+Merge multiple feature files with sample files:
 
 ```
-python -m src.main --mode merge --features <feature_file1> <feature_file2> ... --sample1 <sample_file1> --sample2 <sample_file2>
+python -m src.main --mode merge --features <feature_file1> <feature_file2> ... --sample <sample_file>
 ```
 
 ### Model Training
@@ -88,7 +98,7 @@ You can also resume training from a specific stage:
 python -m src.main --mode train --data <data_file> --target <target_column> --resume-from <stage>
 ```
 
-Where `<stage>` can be one of: `start`, `preprocess`, `initial_model`, `feature_analysis`, `feature_selection`, `final_model`, `deployment`.
+Where `<stage>` can be one of: `start`, `initial_model`, `feature_analysis`, `feature_selection`, `final_model`.
 
 ### Hyperparameter Tuning
 
@@ -140,10 +150,22 @@ The system uses a two-stage modeling approach:
    - Multi-metric evaluation at different threshold levels
 
 5. **Model Deployment**:
-   - Export model in PMML format for production deployment
+   - Batch prediction capabilities
    - Score binning and distribution analysis
    - Consistent feature preprocessing pipeline
-   - Batch prediction capabilities
+
+## Technology Stack
+
+This project utilizes the following libraries:
+
+- scikit-learn - Machine learning algorithms and utilities
+- xgboost - Gradient boosting implementation
+- shap - Feature importance explanation
+- numpy - Numerical computing
+- scipy - Scientific computing
+- matplotlib - Data visualization
+- seaborn - Statistical data visualization
+- pandas - Data manipulation and analysis
 
 ## License
 
