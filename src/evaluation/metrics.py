@@ -282,7 +282,17 @@ def calculate_lift(
     overall_positive_rate = np.mean(y_true)
     
     # Create bins (equal number of samples in each bin)
-    df['bin'] = pd.qcut(df.index, n_bins, labels=False)
+    total_samples = len(df)
+    bin_size = total_samples // n_bins
+    remainder = total_samples % n_bins
+    
+    # Assign bin numbers (distribute remainder across first few bins if needed)
+    bin_assignments = []
+    for bin_idx in range(n_bins):
+        current_bin_size = bin_size + (1 if bin_idx < remainder else 0)
+        bin_assignments.extend([bin_idx] * current_bin_size)
+    
+    df['bin'] = bin_assignments
     
     # Calculate metrics for each bin
     bin_stats = []
