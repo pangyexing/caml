@@ -319,7 +319,7 @@ def plot_feature_correlation_network(
         importances = [G.nodes[n]['importance'] for n in G.nodes()]
         
         # Draw nodes
-        nx.draw_networkx_nodes(
+        nodes = nx.draw_networkx_nodes(
             G, pos, 
             node_size=scores,
             node_color=importances,
@@ -330,7 +330,7 @@ def plot_feature_correlation_network(
         # Create color bar for importance
         sm = plt.cm.ScalarMappable(cmap='viridis')
         sm.set_array(importances)
-        plt.colorbar(sm, label='Feature Importance')
+        plt.colorbar(sm, ax=plt.gca(), label='Feature Importance')
         
         # Draw edges with varying width based on correlation
         for (u, v, d) in G.edges(data=True):
